@@ -1,0 +1,24 @@
+{
+  "listenAddr": ":8008",
+  "tableName": "ipsets",
+  "protectedPorts": "22,8008,8080-8090",
+  "trustProxy": false,
+  "admin": {
+    "username": "admin",
+    "password": "change-me-now"
+  },
+  "firewallState": {
+    "status": "pending",
+    "message": "配置已修改，需要重新应用规则",
+    "updatedAt": "2026-01-01T00:00:00Z"
+  },
+  "whitelist": [
+    {
+      "id": "203.0.113.42",
+      "ip": "203.0.113.42",
+      "note": "example office IP",
+      "createdAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-01-01T00:00:00Z"
+    }
+  ]
+}

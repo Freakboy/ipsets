@@ -1,0 +1,14 @@
+/data/
+/ipsets
+/config.json
+**/config.json
+!config.example.json
+/.sd/
+/.superpowers/
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
+*.test
+coverage.out

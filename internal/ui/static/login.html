@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>登录 IPSets</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="login-shell">
+      <section class="login-card">
+        <p class="kicker">IPSets</p>
+        <h1>管理员登录</h1>
+        <form id="loginForm" class="login-form" novalidate>
+          <label for="usernameInput">用户名</label>
+          <input id="usernameInput" autocomplete="username" placeholder="admin" required>
+
+          <label for="passwordInput">密码</label>
+          <input id="passwordInput" type="password" autocomplete="current-password" required>
+
+          <button class="primary" id="loginButton" type="submit">登录</button>
+        </form>
+        <p class="login-error" id="loginError" hidden></p>
+      </section>
+    </main>
+
+    <script src="/login.js"></script>
+  </body>
+</html>

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>IPSets</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <p class="kicker">IPSets</p>
+          <h1>白名单访问控制</h1>
+        </div>
+        <div class="top-actions">
+          <div class="status" id="status">未连接</div>
+          <button id="logoutBtn" class="ghost">退出</button>
+        </div>
+      </section>
+
+      <section class="rule-banner idle" id="ruleBanner" role="status" aria-live="polite">
+        <div class="rule-banner-main">
+          <p class="label">规则状态</p>
+          <h2 id="ruleBannerTitle">正在检测规则状态</h2>
+          <p id="ruleBannerDetail">刷新后会显示当前规则是否正在生效。</p>
+        </div>
+        <button id="ruleBannerAction" class="ghost" type="button">刷新状态</button>
+      </section>
+
+      <section class="grid">
+        <article class="panel current-panel">
+          <div class="panel-head">
+            <div>
+              <p class="label">当前访问 IP</p>
+              <h2 id="currentIP">--</h2>
+            </div>
+          </div>
+          <label for="currentNote">备注</label>
+          <div class="inline">
+            <input id="currentNote" placeholder="例如：家里宽带、办公室出口">
+            <button id="addCurrentBtn">加入白名单</button>
+          </div>
+        </article>
+
+        <article class="panel action-panel">
+          <div class="panel-head">
+            <div>
+              <p class="label">防火墙状态</p>
+              <h2 id="firewallStatus">--</h2>
+            </div>
+          </div>
+          <label for="portsInput">受保护端口</label>
+          <div class="ports-editor">
+            <textarea id="portsInput" rows="3" spellcheck="false" placeholder="22,8008,8080-8090"></textarea>
+            <button id="savePortsBtn">保存端口</button>
+          </div>
+          <div class="actions">
+            <button id="applyBtn" class="primary">应用规则</button>
+            <button id="restoreBtn" class="danger">恢复原始状态</button>
+          </div>
+          <p class="operation-status" id="operationStatus" role="status" aria-live="polite"></p>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="label">手动添加</p>
+            <h2>指定 IP</h2>
+          </div>
+        </div>
+        <div class="manual-grid">
+          <input id="manualIP" placeholder="203.0.113.42">
+          <input id="manualNote" placeholder="备注">
+          <button id="addManualBtn">添加</button>
+        </div>
+      </section>
+
+      <section class="panel list-panel">
+        <div class="panel-head">
+          <div>
+            <p class="label">白名单</p>
+            <h2>允许访问的 IP</h2>
+          </div>
+          <button id="refreshBtn">刷新</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>IP</th>
+                <th>备注</th>
+                <th>更新时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="entryRows"></tbody>
+          </table>
+          <div class="empty" id="emptyState">还没有白名单 IP</div>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" hidden></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
