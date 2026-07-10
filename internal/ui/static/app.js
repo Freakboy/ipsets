@@ -72,11 +72,14 @@ function setOperationBusy(kind, busy) {
   const applyBtn = el("applyBtn");
   const restoreBtn = el("restoreBtn");
   const bannerAction = el("ruleBannerAction");
+  const syncCloudflareBtn = el("syncCloudflareBtn");
   applyBtn.disabled = busy;
   restoreBtn.disabled = busy;
   bannerAction.disabled = busy;
+  syncCloudflareBtn.disabled = busy;
   if (kind === "apply") applyBtn.textContent = busy ? "应用中" : "应用规则";
   if (kind === "restore") restoreBtn.textContent = busy ? "恢复中" : "恢复原始状态";
+  if (kind === "cloudflare") syncCloudflareBtn.textContent = busy ? "更新中" : "更新 Cloudflare 代理 IP";
 }
 
 function render(data) {
@@ -224,6 +227,23 @@ async function savePorts() {
   await refresh();
 }
 
+async function syncCloudflare() {
+  setOperationBusy("cloudflare", true);
+  setOperationStatus("正在更新 Cloudflare 代理 IP...");
+  try {
+    const result = await api("/api/whitelist/cloudflare", { method: "POST", body: "{}" });
+    const message = `Cloudflare 代理 IP 已更新：新增 ${result.added}，更新 ${result.updated}，移除 ${result.removed}，需要重新应用规则`;
+    setOperationStatus(message, "pending");
+    toast(message);
+    await refresh();
+  } catch (err) {
+    setOperationStatus(err.message, "error");
+    toast(err.message);
+  } finally {
+    setOperationBusy("cloudflare", false);
+  }
+}
+
 async function applyRules() {
   setOperationBusy("apply", true);
   setOperationStatus("正在应用防火墙规则...");
@@ -263,6 +283,7 @@ async function logout() {
 
 el("addCurrentBtn").addEventListener("click", () => addCurrent().catch((err) => toast(err.message)));
 el("addManualBtn").addEventListener("click", () => addManual().catch((err) => toast(err.message)));
+el("syncCloudflareBtn").addEventListener("click", syncCloudflare);
 el("applyBtn").addEventListener("click", applyRules);
 el("restoreBtn").addEventListener("click", restoreRules);
 el("refreshBtn").addEventListener("click", refresh);

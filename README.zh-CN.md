@@ -23,6 +23,7 @@ IPSets 面向简单的运维场景：
 - 用户名和密码登录。
 - 一键添加当前访问 IP。
 - 手动添加 IP 或 CIDR 白名单。
+- 一键同步 Cloudflare 代理 IP 网段。
 - 白名单备注可编辑。
 - 受保护端口列表可编辑，支持范围语法。
 - 配置和白名单持久化到 JSON 文件。
@@ -251,6 +252,8 @@ ipsets.example.com {
 - 如果只保护 `8008`，而 Caddy 转发到 `127.0.0.1:8008`，防火墙看到的后端连接来源会是 Caddy 本机。
 
 对于 Cloudflare 橙云代理域名，服务器防火墙层看到的是 Cloudflare IP。保护源站时，应只允许 Cloudflare IP 段访问 Caddy，并阻止非 Cloudflare 直连。若需要按真实用户 IP 控制访问，建议使用 Cloudflare Access/WAF，或在已经阻止源站直连的前提下，在应用层信任 Cloudflare 头。
+
+Web UI 可以从 Cloudflare 官方 `https://www.cloudflare.com/ips-v4/` 和 `https://www.cloudflare.com/ips-v6/` 列表一键同步代理 IP 网段。同步的条目会标记 `source: "cloudflare"`，下次同步可以移除过期 Cloudflare 网段，且不会删除手动管理的条目。
 
 对于 DNS-only 域名，服务器能看到真实客户端 IP，因此可以在防火墙层使用 IPSets 白名单。代价是源站 IP 会暴露。
 

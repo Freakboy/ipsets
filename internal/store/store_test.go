@@ -75,6 +75,52 @@ func TestDeleteRemovesEntry(t *testing.T) {
 	}
 }
 
+func TestSyncSourceReplacesManagedEntriesOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if _, err := s.AddOrUpdateAddress("203.0.113.42", "manual"); err != nil {
+		t.Fatalf("AddOrUpdateAddress() manual error = %v", err)
+	}
+	result, err := s.SyncSource("cloudflare", []string{"198.51.100.0/24", "2001:db8::/32"}, "Cloudflare proxy IP range")
+	if err != nil {
+		t.Fatalf("SyncSource() first error = %v", err)
+	}
+	if result.Added != 2 || result.Updated != 0 || result.Removed != 0 {
+		t.Fatalf("SyncSource() first result = %#v, want 2 added", result)
+	}
+
+	result, err = s.SyncSource("cloudflare", []string{"198.51.100.0/24", "198.51.101.0/24"}, "Cloudflare proxy IP range")
+	if err != nil {
+		t.Fatalf("SyncSource() second error = %v", err)
+	}
+	if result.Added != 1 || result.Updated != 1 || result.Removed != 1 {
+		t.Fatalf("SyncSource() second result = %#v, want 1 added, 1 updated, 1 removed", result)
+	}
+
+	entries := s.List()
+	if len(entries) != 3 {
+		t.Fatalf("List() length = %d, want manual plus 2 Cloudflare entries: %#v", len(entries), entries)
+	}
+	seen := map[string]Entry{}
+	for _, entry := range entries {
+		seen[entry.IP] = entry
+	}
+	if seen["203.0.113.42"].Source != "" || seen["203.0.113.42"].Note != "manual" {
+		t.Fatalf("manual entry changed: %#v", seen["203.0.113.42"])
+	}
+	for _, ip := range []string{"198.51.100.0/24", "198.51.101.0/24"} {
+		if seen[ip].Source != "cloudflare" || seen[ip].Note != "Cloudflare proxy IP range" {
+			t.Fatalf("managed entry %s = %#v, want Cloudflare source and note", ip, seen[ip])
+		}
+	}
+	if _, ok := seen["2001:db8::/32"]; ok {
+		t.Fatalf("stale Cloudflare entry was not removed: %#v", entries)
+	}
+}
+
 func TestUpdateNotePersistsEntryNote(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	s, err := Open(path)

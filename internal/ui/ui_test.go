@@ -21,6 +21,7 @@ func TestDashboardContainsProminentRuleBanner(t *testing.T) {
 		`id="ruleBannerTitle"`,
 		`id="ruleBannerDetail"`,
 		`id="ruleBannerAction"`,
+		`id="syncCloudflareBtn"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("index.html missing %s", want)

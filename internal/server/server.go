@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -19,18 +22,31 @@ import (
 	"ipsets/internal/store"
 )
 
+const (
+	cloudflareSource = "cloudflare"
+	cloudflareNote   = "Cloudflare proxy IP range"
+)
+
+var cloudflareIPListURLs = []string{
+	"https://www.cloudflare.com/ips-v4/",
+	"https://www.cloudflare.com/ips-v6/",
+}
+
 type Firewall interface {
 	Apply(context.Context, []int, []store.Entry) error
 	Restore(context.Context) error
 	Status(context.Context) string
 }
 
+type CloudflareRangesFunc func(context.Context) ([]string, error)
+
 type AppConfig struct {
-	Config  config.Config
-	Store   *store.Store
-	Wall    Firewall
-	Static  http.Handler
-	Version string
+	Config           config.Config
+	Store            *store.Store
+	Wall             Firewall
+	Static           http.Handler
+	Version          string
+	CloudflareRanges CloudflareRangesFunc
 }
 
 type App struct {
@@ -39,6 +55,7 @@ type App struct {
 	wall     Firewall
 	static   http.Handler
 	version  string
+	cfRanges CloudflareRangesFunc
 	mux      *http.ServeMux
 	sessions map[string]time.Time
 	mu       sync.Mutex
@@ -51,8 +68,12 @@ func New(cfg AppConfig) *App {
 		wall:     cfg.Wall,
 		static:   cfg.Static,
 		version:  cfg.Version,
+		cfRanges: cfg.CloudflareRanges,
 		mux:      http.NewServeMux(),
 		sessions: map[string]time.Time{},
+	}
+	if app.cfRanges == nil {
+		app.cfRanges = fetchCloudflareIPRanges
 	}
 	app.routes()
 	return app
@@ -67,6 +88,7 @@ func (a *App) routes() {
 	a.mux.HandleFunc("POST /api/logout", a.withAuth(a.handleLogout))
 	a.mux.HandleFunc("GET /api/state", a.withAuth(a.handleState))
 	a.mux.HandleFunc("POST /api/whitelist/current", a.withAuth(a.handleAddCurrent))
+	a.mux.HandleFunc("POST /api/whitelist/cloudflare", a.withAuth(a.handleSyncCloudflare))
 	a.mux.HandleFunc("POST /api/whitelist", a.withAuth(a.handleAddManual))
 	a.mux.HandleFunc("PATCH /api/whitelist/{id}", a.withAuth(a.handleUpdateNote))
 	a.mux.HandleFunc("DELETE /api/whitelist/{id}", a.withAuth(a.handleDelete))
@@ -255,6 +277,34 @@ func (a *App) handleAddManual(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entry)
 }
 
+func (a *App) handleSyncCloudflare(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	ranges, err := a.cfRanges(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	ranges, err = normalizeCloudflareRanges(ranges)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	result, err := a.store.SyncSource(cloudflareSource, ranges, cloudflareNote)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"source":  cloudflareSource,
+		"added":   result.Added,
+		"updated": result.Updated,
+		"removed": result.Removed,
+		"entries": result.Entries,
+	})
+}
+
 func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.Delete(r.PathValue("id")); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -364,6 +414,85 @@ func currentIP(r *http.Request, trustProxy bool) string {
 		return ip.Unmap().String()
 	}
 	return host
+}
+
+func fetchCloudflareIPRanges(ctx context.Context) ([]string, error) {
+	client := http.Client{Timeout: 10 * time.Second}
+	var ranges []string
+	for _, url := range cloudflareIPListURLs {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", "ipsets")
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("fetch Cloudflare IP list %s: %w", url, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("fetch Cloudflare IP list %s: HTTP %d", url, resp.StatusCode)
+		}
+		parsed, err := parseCloudflareIPList(url, resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		ranges = append(ranges, parsed...)
+	}
+	return ranges, nil
+}
+
+func normalizeCloudflareRanges(values []string) ([]string, error) {
+	ranges := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		address, err := firewall.NormalizeIPOrCIDR(value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Cloudflare IP range %q: %w", value, err)
+		}
+		if !strings.Contains(address.Value, "/") {
+			return nil, fmt.Errorf("invalid Cloudflare IP range %q is not CIDR", value)
+		}
+		if !seen[address.Value] {
+			ranges = append(ranges, address.Value)
+			seen[address.Value] = true
+		}
+	}
+	if len(ranges) == 0 {
+		return nil, errors.New("Cloudflare IP range list is empty")
+	}
+	return ranges, nil
+}
+
+func parseCloudflareIPList(source string, r io.Reader) ([]string, error) {
+	var ranges []string
+	seen := map[string]bool{}
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		address, err := firewall.NormalizeIPOrCIDR(line)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Cloudflare IP range from %s: %q: %w", source, line, err)
+		}
+		if !strings.Contains(address.Value, "/") {
+			return nil, fmt.Errorf("invalid Cloudflare IP range from %s: %q is not CIDR", source, line)
+		}
+		if !seen[address.Value] {
+			ranges = append(ranges, address.Value)
+			seen[address.Value] = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read Cloudflare IP list %s: %w", source, err)
+	}
+	if len(ranges) == 0 {
+		return nil, fmt.Errorf("Cloudflare IP list %s is empty", source)
+	}
+	return ranges, nil
 }
 
 func forwardedClientIP(r *http.Request) (netip.Addr, bool) {

@@ -4,6 +4,14 @@
 
 All notable changes to IPSets are documented here.
 
+## [0.3.0] - 2026-07-10
+
+### Added
+
+- Add one-click Cloudflare proxy IP synchronization from the official IPv4 and IPv6 lists.
+- Track Cloudflare-managed whitelist entries with `source: "cloudflare"` so future syncs can remove stale Cloudflare ranges without touching manual entries.
+- Show Cloudflare sync progress and add/update/remove counts in the web UI.
+
 ## [0.2.0] - 2026-07-10
 
 ### Added

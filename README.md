@@ -23,6 +23,7 @@ The dashboard always shows whether rules are currently active, whether local cha
 - Web UI with username and password login.
 - One-click add current visitor IP.
 - Manual IP or CIDR whitelist entries.
+- One-click Cloudflare proxy IP range synchronization.
 - Editable notes for whitelist entries.
 - Editable protected port list with range syntax.
 - Persistent configuration and whitelist storage in one JSON file.
@@ -251,6 +252,8 @@ In this setup:
 - If you protect only `8008` while Caddy proxies to `127.0.0.1:8008`, the firewall sees Caddy as the source for the backend connection.
 
 For Cloudflare proxied DNS records, your server sees Cloudflare IPs at the firewall layer. To protect the origin, allow Cloudflare IP ranges to reach Caddy and block direct non-Cloudflare traffic. For real end-user IP restrictions behind Cloudflare, use Cloudflare Access/WAF or an application-layer check that trusts Cloudflare headers only after the origin is protected from direct access.
+
+The web UI can sync Cloudflare proxy IP ranges from the official `https://www.cloudflare.com/ips-v4/` and `https://www.cloudflare.com/ips-v6/` lists. Synced entries are marked with `source: "cloudflare"` so the next sync can remove stale Cloudflare ranges without deleting manually managed entries.
 
 For DNS-only records, the server sees the real client IP, so IPSets can whitelist the client IP at the firewall layer. The trade-off is that DNS-only records expose the origin IP.
 

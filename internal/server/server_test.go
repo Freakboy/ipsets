@@ -177,6 +177,80 @@ func TestAddManualAcceptsCIDRWhitelistEntry(t *testing.T) {
 	}
 }
 
+func TestSyncCloudflareWhitelistEntries(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if _, err := s.AddOrUpdateAddress("203.0.113.42", "manual"); err != nil {
+		t.Fatalf("AddOrUpdateAddress() error = %v", err)
+	}
+	hash, err := config.HashPassword("secret")
+	if err != nil {
+		t.Fatalf("HashPassword() error = %v", err)
+	}
+	app := New(AppConfig{
+		Config: config.Config{
+			AdminUsername:           "admin",
+			AdminPasswordHash:       hash.PasswordHash,
+			AdminPasswordSalt:       hash.PasswordSalt,
+			AdminPasswordIterations: hash.PasswordIterations,
+		},
+		Store: s,
+		CloudflareRanges: func(context.Context) ([]string, error) {
+			return []string{"198.51.100.42/24", "2001:db8::/32"}, nil
+		},
+	})
+	session := loginCookie(t, app, "admin", "secret")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/whitelist/cloudflare", nil)
+	req.AddCookie(session)
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var body struct {
+		Added   int           `json:"added"`
+		Updated int           `json:"updated"`
+		Removed int           `json:"removed"`
+		Entries []store.Entry `json:"entries"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if body.Added != 2 || body.Updated != 0 || body.Removed != 0 || len(body.Entries) != 2 {
+		t.Fatalf("sync response = %#v, want 2 Cloudflare entries added", body)
+	}
+
+	entries := s.List()
+	seen := map[string]store.Entry{}
+	for _, entry := range entries {
+		seen[entry.IP] = entry
+	}
+	if seen["203.0.113.42"].Note != "manual" || seen["203.0.113.42"].Source != "" {
+		t.Fatalf("manual entry changed: %#v", seen["203.0.113.42"])
+	}
+	if seen["198.51.100.0/24"].Source != "cloudflare" || seen["2001:db8::/32"].Source != "cloudflare" {
+		t.Fatalf("Cloudflare entries missing source: %#v", entries)
+	}
+	if got := s.FirewallState(); got.Status != "pending" || got.UpdatedAt.IsZero() {
+		t.Fatalf("FirewallState = %#v, want pending after Cloudflare sync", got)
+	}
+}
+
+func TestParseCloudflareIPList(t *testing.T) {
+	ranges, err := parseCloudflareIPList("https://example.test/ips-v4", strings.NewReader("\n# comment\n198.51.100.42/24\n203.0.113.0/24\n"))
+	if err != nil {
+		t.Fatalf("parseCloudflareIPList() error = %v", err)
+	}
+	want := []string{"198.51.100.0/24", "203.0.113.0/24"}
+	if !reflect.DeepEqual(ranges, want) {
+		t.Fatalf("parseCloudflareIPList() = %#v, want %#v", ranges, want)
+	}
+}
+
 func TestLoginRejectsWrongPasswordAndLogoutClearsSession(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "config.json"))
 	if err != nil {

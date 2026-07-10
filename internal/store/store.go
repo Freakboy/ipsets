@@ -16,8 +16,16 @@ type Entry struct {
 	ID        string    `json:"id"`
 	IP        string    `json:"ip"`
 	Note      string    `json:"note"`
+	Source    string    `json:"source,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type SyncResult struct {
+	Entries []Entry
+	Added   int
+	Updated int
+	Removed int
 }
 
 type FirewallState struct {
@@ -111,6 +119,59 @@ func (s *Store) AddOrUpdateAddress(address string, note string) (Entry, error) {
 		return Entry{}, err
 	}
 	return entry, nil
+}
+
+func (s *Store) SyncSource(source string, addresses []string, note string) (SyncResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return SyncResult{}, errors.New("source is required")
+	}
+
+	now := time.Now().UTC()
+	desired := map[string]bool{}
+	for _, address := range addresses {
+		address = strings.TrimSpace(address)
+		if address != "" {
+			desired[address] = true
+		}
+	}
+
+	result := SyncResult{}
+	for id, entry := range s.entries {
+		if entry.Source == source && !desired[id] {
+			delete(s.entries, id)
+			result.Removed++
+		}
+	}
+
+	for address := range desired {
+		entry, exists := s.entries[address]
+		if !exists {
+			entry = Entry{
+				ID:        address,
+				IP:        address,
+				CreatedAt: now,
+			}
+			result.Added++
+		} else {
+			result.Updated++
+		}
+		entry.Note = strings.TrimSpace(note)
+		entry.Source = source
+		entry.UpdatedAt = now
+		s.entries[address] = entry
+		result.Entries = append(result.Entries, entry)
+	}
+	sort.Slice(result.Entries, func(i, j int) bool { return result.Entries[i].IP < result.Entries[j].IP })
+
+	s.markPendingLocked()
+	if err := s.saveLocked(); err != nil {
+		return SyncResult{}, err
+	}
+	return result, nil
 }
 
 func (s *Store) Delete(id string) error {

@@ -4,6 +4,14 @@
 
 这里记录 IPSets 的重要版本变更。
 
+## [0.3.0] - 2026-07-10
+
+### 新增
+
+- 支持一键从 Cloudflare 官方 IPv4 和 IPv6 列表同步代理 IP 网段。
+- 使用 `source: "cloudflare"` 标记由 Cloudflare 同步管理的白名单条目，后续同步可以移除过期 Cloudflare 网段且不影响手动条目。
+- Web UI 显示 Cloudflare 同步进度，以及新增、更新、移除数量。
+
 ## [0.2.0] - 2026-07-10
 
 ### 新增

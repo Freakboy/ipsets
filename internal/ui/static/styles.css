@@ -279,6 +279,10 @@ h2 {
   grid-template-columns: 1.1fr 1.4fr auto;
 }
 
+.sync-cloudflare {
+  margin-top: 12px;
+}
+
 .ports-editor {
   grid-template-columns: minmax(0, 1fr);
 }
