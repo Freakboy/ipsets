@@ -24,6 +24,12 @@ type NFTManager struct {
 	cfg NFTConfig
 }
 
+type Address struct {
+	Value  string
+	Is4    bool
+	Prefix netip.Prefix
+}
+
 func NewNFTManager(cfg NFTConfig) *NFTManager {
 	return &NFTManager{cfg: cfg}
 }
@@ -40,6 +46,28 @@ func NormalizeIP(raw string) (netip.Addr, error) {
 	return ip.Unmap(), nil
 }
 
+func NormalizeIPOrCIDR(raw string) (Address, error) {
+	raw = strings.TrimSpace(raw)
+	if prefix, err := netip.ParsePrefix(raw); err == nil {
+		addr := prefix.Addr().Unmap()
+		bits := prefix.Bits()
+		if addr.Is4() && bits > 32 {
+			return Address{}, fmt.Errorf("invalid IPv4 CIDR prefix %q", raw)
+		}
+		normalized := netip.PrefixFrom(addr, bits).Masked()
+		return Address{Value: normalized.String(), Is4: addr.Is4(), Prefix: normalized}, nil
+	}
+	ip, err := NormalizeIP(raw)
+	if err != nil {
+		return Address{}, err
+	}
+	bits := 128
+	if ip.Is4() {
+		bits = 32
+	}
+	return Address{Value: ip.String(), Is4: ip.Is4(), Prefix: netip.PrefixFrom(ip, bits)}, nil
+}
+
 func BuildNFTScript(cfg NFTConfig, entries []store.Entry) (string, error) {
 	table := strings.TrimSpace(cfg.TableName)
 	if table == "" {
@@ -49,25 +77,25 @@ func BuildNFTScript(cfg NFTConfig, entries []store.Entry) (string, error) {
 		return "", errors.New("at least one TCP port is required")
 	}
 
-	var v4 []string
-	var v6 []string
+	var v4 []Address
+	var v6 []Address
 	for _, entry := range entries {
-		ip, err := NormalizeIP(entry.IP)
+		address, err := NormalizeIPOrCIDR(entry.IP)
 		if err != nil {
 			return "", fmt.Errorf("invalid whitelist IP %q: %w", entry.IP, err)
 		}
-		if ip.Is4() {
-			v4 = append(v4, ip.String())
+		if address.Is4 {
+			v4 = appendCoveredAddress(v4, address)
 		} else {
-			v6 = append(v6, ip.String())
+			v6 = appendCoveredAddress(v6, address)
 		}
 	}
 
 	portSet := formatPorts(cfg.TCPPorts)
 	var b strings.Builder
 	fmt.Fprintf(&b, "table inet %s {\n", table)
-	writeNFTSet(&b, "whitelist_v4", "ipv4_addr", v4)
-	writeNFTSet(&b, "whitelist_v6", "ipv6_addr", v6)
+	writeNFTSet(&b, "whitelist_v4", "ipv4_addr", addressValues(v4))
+	writeNFTSet(&b, "whitelist_v6", "ipv6_addr", addressValues(v6))
 	b.WriteString("  chain prerouting {\n")
 	b.WriteString("    type filter hook prerouting priority -101; policy accept;\n")
 	b.WriteString("    iifname \"lo\" accept\n")
@@ -87,9 +115,41 @@ func BuildNFTScript(cfg NFTConfig, entries []store.Entry) (string, error) {
 	return b.String(), nil
 }
 
+func appendCoveredAddress(addresses []Address, address Address) []Address {
+	for _, existing := range addresses {
+		if prefixContains(existing.Prefix, address.Prefix) {
+			return addresses
+		}
+	}
+
+	kept := addresses[:0]
+	for _, existing := range addresses {
+		if prefixContains(address.Prefix, existing.Prefix) {
+			continue
+		}
+		kept = append(kept, existing)
+	}
+	return append(kept, address)
+}
+
+func prefixContains(parent, child netip.Prefix) bool {
+	return parent.Addr().Is4() == child.Addr().Is4() &&
+		parent.Bits() <= child.Bits() &&
+		parent.Contains(child.Addr())
+}
+
+func addressValues(addresses []Address) []string {
+	values := make([]string, 0, len(addresses))
+	for _, address := range addresses {
+		values = append(values, address.Value)
+	}
+	return values
+}
+
 func writeNFTSet(b *strings.Builder, name, setType string, elements []string) {
 	fmt.Fprintf(b, "  set %s {\n", name)
 	fmt.Fprintf(b, "    type %s\n", setType)
+	b.WriteString("    flags interval\n")
 	if len(elements) > 0 {
 		fmt.Fprintf(b, "    elements = { %s }\n", strings.Join(elements, ", "))
 	}

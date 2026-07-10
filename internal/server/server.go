@@ -242,12 +242,12 @@ func (a *App) handleAddManual(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "请求体不是有效 JSON")
 		return
 	}
-	ip, err := firewall.NormalizeIP(body.IP)
+	address, err := firewall.NormalizeIPOrCIDR(body.IP)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "请输入单个有效 IP 地址")
+		writeError(w, http.StatusBadRequest, "请输入有效 IP 地址或 CIDR 网段")
 		return
 	}
-	entry, err := a.store.AddOrUpdate(ip, body.Note)
+	entry, err := a.store.AddOrUpdateAddress(address.Value, body.Note)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -296,7 +296,7 @@ func (a *App) handleUpdatePorts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	raw := strings.TrimSpace(body.ProtectedPorts)
+	raw := config.FormatPorts(ports)
 	if err := a.store.UpdateProtectedPorts(raw); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

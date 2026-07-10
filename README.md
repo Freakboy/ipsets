@@ -4,12 +4,14 @@
 
 [中文说明](README.zh-CN.md)
 
+[Changelog](CHANGELOG.md)
+
 ## What It Does
 
 IPSets is designed for a simple operations workflow:
 
 1. Open the web UI.
-2. Add your current public IP or manually add a single IP address.
+2. Add your current public IP, or manually add an IP address or CIDR range.
 3. Add or edit notes so the whitelist stays understandable.
 4. Configure the protected TCP ports, such as `22,8008,8080-8090`.
 5. Click **Apply rules**.
@@ -20,7 +22,7 @@ The dashboard always shows whether rules are currently active, whether local cha
 
 - Web UI with username and password login.
 - One-click add current visitor IP.
-- Manual single-IP whitelist entries.
+- Manual IP or CIDR whitelist entries.
 - Editable notes for whitelist entries.
 - Editable protected port list with range syntax.
 - Persistent configuration and whitelist storage in one JSON file.
@@ -31,7 +33,7 @@ The dashboard always shows whether rules are currently active, whether local cha
 - Reverse-proxy-aware client IP detection.
 - IPv4 and IPv6 whitelist support.
 
-IPSets does **not** support CIDR ranges. Add individual IP addresses only.
+IPSets supports individual IP addresses and CIDR ranges, such as `203.0.113.42` or `203.0.113.0/24`.
 
 ## Requirements
 
@@ -170,6 +172,7 @@ Rules:
 - Valid ports are `1` through `65535`.
 - Ranges are inclusive.
 - Duplicates are removed.
+- Saved ports are normalized into ascending order and compact ranges.
 - At least one port is required.
 - Docker syntax like `8080:80` is not accepted. For Docker published ports, configure the host port, for example `8080`.
 
@@ -294,7 +297,7 @@ Check:
 - The process can run `nft`.
 - The process has permission to manage nftables.
 - The protected port list contains only valid ports or ranges.
-- Whitelist entries are valid single IP addresses.
+- Whitelist entries are valid IP addresses or CIDR ranges.
 
 ### A new port does not seem protected
 

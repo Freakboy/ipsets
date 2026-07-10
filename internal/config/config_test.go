@@ -158,6 +158,25 @@ func TestLoadRejectsInvalidPorts(t *testing.T) {
 	}
 }
 
+func TestParsePortsSortsAndFormatPortsCompactsRanges(t *testing.T) {
+	ports, err := ParsePorts("8082,8008,8080-8081,22,8081")
+	if err != nil {
+		t.Fatalf("ParsePorts() error = %v", err)
+	}
+	want := []int{22, 8008, 8080, 8081, 8082}
+	if len(ports) != len(want) {
+		t.Fatalf("ParsePorts() = %#v, want %#v", ports, want)
+	}
+	for i := range want {
+		if ports[i] != want[i] {
+			t.Fatalf("ParsePorts() = %#v, want %#v", ports, want)
+		}
+	}
+	if got := FormatPorts(ports); got != "22,8008,8080-8082" {
+		t.Fatalf("FormatPorts() = %q, want sorted compact ranges", got)
+	}
+}
+
 func TestLoadAcceptsLegacyIPGuardEnvironmentOverrides(t *testing.T) {
 	legacyDir := t.TempDir()
 	t.Setenv("IPGUARD_LISTEN", ":9090")

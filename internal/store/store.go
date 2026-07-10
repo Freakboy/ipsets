@@ -85,16 +85,20 @@ func decodeConfig(data []byte) ([]Entry, FirewallState, error) {
 }
 
 func (s *Store) AddOrUpdate(ip netip.Addr, note string) (Entry, error) {
+	return s.AddOrUpdateAddress(ip.String(), note)
+}
+
+func (s *Store) AddOrUpdateAddress(address string, note string) (Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	now := time.Now().UTC()
-	id := ip.String()
+	id := strings.TrimSpace(address)
 	entry, exists := s.entries[id]
 	if !exists {
 		entry = Entry{
 			ID:        id,
-			IP:        ip.String(),
+			IP:        id,
 			CreatedAt: now,
 		}
 	}

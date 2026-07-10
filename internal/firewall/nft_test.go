@@ -11,7 +11,9 @@ import (
 func TestBuildNFTScriptAllowsWhitelistedIPsAndDropsProtectedPorts(t *testing.T) {
 	entries := []store.Entry{
 		{IP: "203.0.113.42", Note: "office"},
+		{IP: "198.51.100.42/24", Note: "office range"},
 		{IP: "2001:db8::8", Note: "ipv6"},
+		{IP: "2001:db8:abcd::/48", Note: "ipv6 range"},
 	}
 
 	script, err := BuildNFTScript(NFTConfig{
@@ -26,8 +28,10 @@ func TestBuildNFTScriptAllowsWhitelistedIPsAndDropsProtectedPorts(t *testing.T) 
 		"table inet ipguard_test",
 		"set whitelist_v4",
 		"203.0.113.42",
+		"198.51.100.0/24",
 		"set whitelist_v6",
 		"2001:db8::8",
+		"2001:db8:abcd::/48",
 		"chain prerouting",
 		"type filter hook prerouting priority -101; policy accept;",
 		"fib daddr type local tcp dport { 22, 443 } ip saddr @whitelist_v4 accept",
@@ -75,17 +79,36 @@ func TestBuildNFTScriptDefaultsToIPSetsTable(t *testing.T) {
 	}
 }
 
-func TestNormalizeIPRejectsCIDR(t *testing.T) {
-	_, err := NormalizeIP("203.0.113.0/24")
-	if err == nil {
-		t.Fatal("NormalizeIP() error = nil, want CIDR rejection")
+func TestBuildNFTScriptRemovesEntriesCoveredByCIDR(t *testing.T) {
+	script, err := BuildNFTScript(NFTConfig{TableName: "ipsets", TCPPorts: []int{8008}}, []store.Entry{
+		{IP: "198.51.100.42"},
+		{IP: "198.51.100.0/24"},
+	})
+	if err != nil {
+		t.Fatalf("BuildNFTScript() error = %v", err)
 	}
+	if strings.Contains(script, "198.51.100.42") {
+		t.Fatalf("script contains IP already covered by CIDR:\n%s", script)
+	}
+	if !strings.Contains(script, "198.51.100.0/24") {
+		t.Fatalf("script missing covering CIDR:\n%s", script)
+	}
+}
 
+func TestNormalizeIPOrCIDRCanonicalizesAddressesAndPrefixes(t *testing.T) {
 	ip, err := NormalizeIP(" 203.0.113.42 ")
 	if err != nil {
 		t.Fatalf("NormalizeIP() error = %v", err)
 	}
 	if ip != netip.MustParseAddr("203.0.113.42") {
 		t.Fatalf("NormalizeIP() = %v", ip)
+	}
+
+	address, err := NormalizeIPOrCIDR(" 203.0.113.42/24 ")
+	if err != nil {
+		t.Fatalf("NormalizeIPOrCIDR() error = %v", err)
+	}
+	if address.Value != "203.0.113.0/24" || !address.Is4 {
+		t.Fatalf("NormalizeIPOrCIDR() = %#v, want canonical IPv4 prefix", address)
 	}
 }

@@ -145,6 +145,38 @@ func TestAddCurrentIPRequiresAuthAndStoresNote(t *testing.T) {
 	}
 }
 
+func TestAddManualAcceptsCIDRWhitelistEntry(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	hash, err := config.HashPassword("secret")
+	if err != nil {
+		t.Fatalf("HashPassword() error = %v", err)
+	}
+	app := New(AppConfig{
+		Config: config.Config{
+			AdminUsername:           "admin",
+			AdminPasswordHash:       hash.PasswordHash,
+			AdminPasswordSalt:       hash.PasswordSalt,
+			AdminPasswordIterations: hash.PasswordIterations,
+		},
+		Store: s,
+	})
+	session := loginCookie(t, app, "admin", "secret")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/whitelist", strings.NewReader(`{"ip":"203.0.113.42/24","note":"office range"}`))
+	req.AddCookie(session)
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if entries := s.List(); len(entries) != 1 || entries[0].IP != "203.0.113.0/24" || entries[0].ID != "203.0.113.0/24" {
+		t.Fatalf("entries = %#v, want canonical CIDR entry", entries)
+	}
+}
+
 func TestLoginRejectsWrongPasswordAndLogoutClearsSession(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "config.json"))
 	if err != nil {
@@ -235,7 +267,7 @@ func TestAuthenticatedUserCanUpdateNoteAndProtectedPorts(t *testing.T) {
 		t.Fatalf("Note = %q, want updated", got)
 	}
 
-	portsReq := httptest.NewRequest(http.MethodPut, "/api/config/ports", strings.NewReader(`{"protectedPorts":"8008,8080-8082"}`))
+	portsReq := httptest.NewRequest(http.MethodPut, "/api/config/ports", strings.NewReader(`{"protectedPorts":"8082,8008,8080-8081"}`))
 	portsReq.AddCookie(session)
 	rec = httptest.NewRecorder()
 	app.ServeHTTP(rec, portsReq)
@@ -249,7 +281,7 @@ func TestAuthenticatedUserCanUpdateNoteAndProtectedPorts(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("Decode() error = %v", err)
 	}
-	if body.Raw != "8008,8080-8082" || len(body.ProtectedPorts) != 4 || body.ProtectedPorts[3] != 8082 {
+	if body.Raw != "8008,8080-8082" || len(body.ProtectedPorts) != 4 || body.ProtectedPorts[0] != 8008 || body.ProtectedPorts[3] != 8082 {
 		t.Fatalf("ports response = %#v", body)
 	}
 }

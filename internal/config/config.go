@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -298,7 +299,42 @@ func ParsePorts(raw string) ([]int, error) {
 	if len(ports) == 0 {
 		return nil, errors.New("at least one protected port is required")
 	}
+	sort.Ints(ports)
 	return ports, nil
+}
+
+func FormatPorts(ports []int) string {
+	if len(ports) == 0 {
+		return ""
+	}
+	values := append([]int(nil), ports...)
+	sort.Ints(values)
+
+	ranges := make([]string, 0, len(values))
+	start := values[0]
+	prev := values[0]
+	for i := 1; i < len(values); i++ {
+		port := values[i]
+		if port == prev {
+			continue
+		}
+		if port == prev+1 {
+			prev = port
+			continue
+		}
+		ranges = append(ranges, formatPortRange(start, prev))
+		start = port
+		prev = port
+	}
+	ranges = append(ranges, formatPortRange(start, prev))
+	return strings.Join(ranges, ",")
+}
+
+func formatPortRange(start, end int) string {
+	if start == end {
+		return strconv.Itoa(start)
+	}
+	return strconv.Itoa(start) + "-" + strconv.Itoa(end)
 }
 
 func parsePort(raw string) (int, error) {
