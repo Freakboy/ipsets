@@ -3,6 +3,7 @@ const passwordInput = document.getElementById("passwordInput");
 const loginForm = document.getElementById("loginForm");
 const loginButton = document.getElementById("loginButton");
 const loginError = document.getElementById("loginError");
+const globalLoading = document.getElementById("globalLoading");
 
 usernameInput.value = localStorage.getItem("ipsets.username") || "admin";
 
@@ -18,6 +19,14 @@ function showError(message) {
   loginError.hidden = false;
 }
 
+function setLoginBusy(busy) {
+  loginButton.disabled = busy;
+  usernameInput.disabled = busy;
+  passwordInput.disabled = busy;
+  loginButton.textContent = busy ? "登录中" : "登录";
+  if (globalLoading) globalLoading.hidden = !busy;
+}
+
 async function login(event) {
   event.preventDefault();
   const username = usernameInput.value.trim();
@@ -28,8 +37,7 @@ async function login(event) {
     return;
   }
 
-  loginButton.disabled = true;
-  loginButton.textContent = "登录中";
+  setLoginBusy(true);
 
   try {
     const res = await fetch("/api/login", {
@@ -42,8 +50,7 @@ async function login(event) {
     location.href = nextURL();
   } catch (err) {
     showError(err.message || "登录失败");
-    loginButton.disabled = false;
-    loginButton.textContent = "登录";
+    setLoginBusy(false);
   }
 }
 

@@ -41,7 +41,7 @@ IPSets supports individual IP addresses and CIDR ranges, such as `203.0.113.42` 
 - Linux server.
 - `nft` command available on the server.
 - Permission to manage nftables, usually by running as root or with equivalent `CAP_NET_ADMIN` capability.
-- Go version compatible with [go.mod](go.mod) if building from source.
+- Go version compatible with [go.mod](go.mod) if building from source. Use the pinned toolchain or newer so the build includes current Go standard-library security fixes.
 
 The web UI can be opened from any modern operating system browser. Only the server running IPSets needs Linux and nftables.
 
@@ -150,6 +150,7 @@ The runtime config may look like this:
     {
       "id": "203.0.113.42",
       "ip": "203.0.113.42",
+      "order": 0,
       "note": "example office IP",
       "createdAt": "2026-01-01T00:00:00Z",
       "updatedAt": "2026-01-01T00:00:00Z"
@@ -253,7 +254,7 @@ In this setup:
 
 For Cloudflare proxied DNS records, your server sees Cloudflare IPs at the firewall layer. To protect the origin, allow Cloudflare IP ranges to reach Caddy and block direct non-Cloudflare traffic. For real end-user IP restrictions behind Cloudflare, use Cloudflare Access/WAF or an application-layer check that trusts Cloudflare headers only after the origin is protected from direct access.
 
-The web UI can sync Cloudflare proxy IP ranges from the official `https://www.cloudflare.com/ips-v4/` and `https://www.cloudflare.com/ips-v6/` lists. Synced entries are marked with `source: "cloudflare"` so the next sync can remove stale Cloudflare ranges without deleting manually managed entries.
+The web UI can sync Cloudflare proxy IPv4 ranges from the official `https://www.cloudflare.com/ips-v4/` list. Synced entries are marked with `source: "cloudflare"` so the next sync can remove stale Cloudflare ranges without deleting manually managed entries. Whitelist entries are displayed and persisted in numeric IP order.
 
 For DNS-only records, the server sees the real client IP, so IPSets can whitelist the client IP at the firewall layer. The trade-off is that DNS-only records expose the origin IP.
 

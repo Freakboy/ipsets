@@ -1,0 +1,74 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run tests
+        run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch:
+          - amd64
+          - arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build Linux binary
+        env:
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          version="${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            version="${GITHUB_SHA::12}"
+          fi
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux go build \
+            -trimpath \
+            -ldflags="-s -w -X main.version=${version}" \
+            -o "dist/ipsets-linux-${GOARCH}" \
+            ./cmd/ipsets
+          sha256sum "dist/ipsets-linux-${GOARCH}" > "dist/ipsets-linux-${GOARCH}.sha256"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipsets-linux-${{ matrix.goarch }}
+          path: |
+            dist/ipsets-linux-${{ matrix.goarch }}
+            dist/ipsets-linux-${{ matrix.goarch }}.sha256
+          if-no-files-found: error
+          retention-days: 14

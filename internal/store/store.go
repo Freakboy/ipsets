@@ -15,6 +15,7 @@ import (
 type Entry struct {
 	ID        string    `json:"id"`
 	IP        string    `json:"ip"`
+	Order     int       `json:"order"`
 	Note      string    `json:"note"`
 	Source    string    `json:"source,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -107,6 +108,7 @@ func (s *Store) AddOrUpdateAddress(address string, note string) (Entry, error) {
 		entry = Entry{
 			ID:        id,
 			IP:        id,
+			Order:     s.nextOrderLocked(),
 			CreatedAt: now,
 		}
 	}
@@ -138,6 +140,11 @@ func (s *Store) SyncSource(source string, addresses []string, note string) (Sync
 			desired[address] = true
 		}
 	}
+	orderedDesired := make([]string, 0, len(desired))
+	for address := range desired {
+		orderedDesired = append(orderedDesired, address)
+	}
+	sort.Slice(orderedDesired, func(i, j int) bool { return compareIP(orderedDesired[i], orderedDesired[j]) < 0 })
 
 	result := SyncResult{}
 	for id, entry := range s.entries {
@@ -147,12 +154,13 @@ func (s *Store) SyncSource(source string, addresses []string, note string) (Sync
 		}
 	}
 
-	for address := range desired {
+	for _, address := range orderedDesired {
 		entry, exists := s.entries[address]
 		if !exists {
 			entry = Entry{
 				ID:        address,
 				IP:        address,
+				Order:     s.nextOrderLocked(),
 				CreatedAt: now,
 			}
 			result.Added++
@@ -165,7 +173,12 @@ func (s *Store) SyncSource(source string, addresses []string, note string) (Sync
 		s.entries[address] = entry
 		result.Entries = append(result.Entries, entry)
 	}
-	sort.Slice(result.Entries, func(i, j int) bool { return result.Entries[i].IP < result.Entries[j].IP })
+	sort.SliceStable(result.Entries, func(i, j int) bool {
+		if result.Entries[i].Order != result.Entries[j].Order {
+			return result.Entries[i].Order < result.Entries[j].Order
+		}
+		return compareIP(result.Entries[i].IP, result.Entries[j].IP) < 0
+	})
 
 	s.markPendingLocked()
 	if err := s.saveLocked(); err != nil {
@@ -199,6 +212,31 @@ func (s *Store) UpdateNote(id string, note string) (Entry, error) {
 		return Entry{}, err
 	}
 	return entry, nil
+}
+
+func (s *Store) Reorder(ids []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(ids) != len(s.entries) {
+		return errors.New("order must include every whitelist entry")
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			return errors.New("order contains duplicate whitelist entries")
+		}
+		if _, ok := s.entries[id]; !ok {
+			return errors.New("order contains an unknown whitelist entry")
+		}
+		seen[id] = true
+	}
+	for order, id := range ids {
+		entry := s.entries[id]
+		entry.Order = order
+		s.entries[id] = entry
+	}
+	return s.saveLocked()
 }
 
 func (s *Store) UpdateProtectedPorts(raw string) error {
@@ -241,13 +279,56 @@ func (s *Store) List() []Entry {
 	for _, entry := range s.entries {
 		entries = append(entries, entry)
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].CreatedAt.Equal(entries[j].CreatedAt) {
-			return entries[i].IP < entries[j].IP
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Order != entries[j].Order {
+			return entries[i].Order < entries[j].Order
 		}
-		return entries[i].CreatedAt.Before(entries[j].CreatedAt)
+		return compareIP(entries[i].IP, entries[j].IP) < 0
 	})
 	return entries
+}
+
+func compareIP(left, right string) int {
+	leftAddr, leftBits, leftOK := sortableIP(left)
+	rightAddr, rightBits, rightOK := sortableIP(right)
+	if leftOK && rightOK {
+		if leftAddr.Is4() != rightAddr.Is4() {
+			if leftAddr.Is4() {
+				return -1
+			}
+			return 1
+		}
+		if compared := leftAddr.Compare(rightAddr); compared != 0 {
+			return compared
+		}
+		if leftBits != rightBits {
+			if leftBits < rightBits {
+				return -1
+			}
+			return 1
+		}
+	}
+	if left < right {
+		return -1
+	}
+	if left > right {
+		return 1
+	}
+	return 0
+}
+
+func sortableIP(value string) (netip.Addr, int, bool) {
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return prefix.Addr(), prefix.Bits(), true
+	}
+	if address, err := netip.ParseAddr(value); err == nil {
+		bits := 128
+		if address.Is4() {
+			bits = 32
+		}
+		return address, bits, true
+	}
+	return netip.Addr{}, 0, false
 }
 
 func (s *Store) saveLocked() error {
@@ -258,7 +339,12 @@ func (s *Store) saveLocked() error {
 	for _, entry := range s.entries {
 		entries = append(entries, entry)
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].IP < entries[j].IP })
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Order != entries[j].Order {
+			return entries[i].Order < entries[j].Order
+		}
+		return compareIP(entries[i].IP, entries[j].IP) < 0
+	})
 
 	raw, err := s.readRawConfigLocked()
 	if err != nil {
@@ -274,6 +360,16 @@ func (s *Store) saveLocked() error {
 		return err
 	}
 	return s.writeRawConfigLocked(raw)
+}
+
+func (s *Store) nextOrderLocked() int {
+	order := 0
+	for _, entry := range s.entries {
+		if entry.Order >= order {
+			order = entry.Order + 1
+		}
+	}
+	return order
 }
 
 func (s *Store) saveRawFieldLocked(field string, value string) error {

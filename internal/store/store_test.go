@@ -75,6 +75,98 @@ func TestDeleteRemovesEntry(t *testing.T) {
 	}
 }
 
+func TestListSortsByNumericIP(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"whitelist":[{"id":"10.0.0.2","ip":"10.0.0.2"},{"id":"2.0.0.10","ip":"2.0.0.10"},{"id":"10.0.0.0/8","ip":"10.0.0.0/8"},{"id":"192.168.1.0/24","ip":"192.168.1.0/24"}]}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	entries := s.List()
+	want := []string{"2.0.0.10", "10.0.0.0/8", "10.0.0.2", "192.168.1.0/24"}
+	for i, entry := range entries {
+		if entry.IP != want[i] {
+			t.Fatalf("List()[%d].IP = %q, want %q; entries = %#v", i, entry.IP, want[i], entries)
+		}
+	}
+}
+
+func TestReorderPersistsWhitelistOrder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	for _, ip := range []string{"192.0.2.1", "192.0.2.2", "192.0.2.3"} {
+		if _, err := s.AddOrUpdateAddress(ip, ""); err != nil {
+			t.Fatalf("AddOrUpdateAddress(%q) error = %v", ip, err)
+		}
+	}
+	if err := s.UpdateFirewallState(FirewallState{Status: "applied", Message: "ok"}); err != nil {
+		t.Fatalf("UpdateFirewallState() error = %v", err)
+	}
+
+	if err := s.Reorder([]string{"192.0.2.3", "192.0.2.1", "192.0.2.2"}); err != nil {
+		t.Fatalf("Reorder() error = %v", err)
+	}
+	entries := s.List()
+	want := []string{"192.0.2.3", "192.0.2.1", "192.0.2.2"}
+	for i, entry := range entries {
+		if entry.IP != want[i] || entry.Order != i {
+			t.Fatalf("List()[%d] = %#v, want IP %q and order %d", i, entry, want[i], i)
+		}
+	}
+	if got := s.FirewallState(); got.Status != "applied" {
+		t.Fatalf("FirewallState() = %#v, display reorder must not mark rules pending", got)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() reopened error = %v", err)
+	}
+	entries = reopened.List()
+	for i, entry := range entries {
+		if entry.IP != want[i] || entry.Order != i {
+			t.Fatalf("reopened List()[%d] = %#v, want IP %q and order %d", i, entry, want[i], i)
+		}
+	}
+}
+
+func TestReorderRejectsIncompleteOrder(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if _, err := s.AddOrUpdateAddress("192.0.2.1", ""); err != nil {
+		t.Fatalf("AddOrUpdateAddress() error = %v", err)
+	}
+	if err := s.Reorder(nil); err == nil {
+		t.Fatal("Reorder() error = nil, want incomplete order rejection")
+	}
+}
+
+func TestReorderValidatesBeforeChangingEntries(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	for _, ip := range []string{"192.0.2.1", "192.0.2.2"} {
+		if _, err := s.AddOrUpdateAddress(ip, ""); err != nil {
+			t.Fatalf("AddOrUpdateAddress(%q) error = %v", ip, err)
+		}
+	}
+	if err := s.Reorder([]string{"192.0.2.2", "unknown"}); err == nil {
+		t.Fatal("Reorder() error = nil, want unknown entry rejection")
+	}
+	entries := s.List()
+	if entries[0].IP != "192.0.2.1" || entries[0].Order != 0 || entries[1].IP != "192.0.2.2" || entries[1].Order != 1 {
+		t.Fatalf("entries changed after rejected reorder: %#v", entries)
+	}
+}
+
 func TestSyncSourceReplacesManagedEntriesOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	s, err := Open(path)
@@ -84,20 +176,20 @@ func TestSyncSourceReplacesManagedEntriesOnly(t *testing.T) {
 	if _, err := s.AddOrUpdateAddress("203.0.113.42", "manual"); err != nil {
 		t.Fatalf("AddOrUpdateAddress() manual error = %v", err)
 	}
-	result, err := s.SyncSource("cloudflare", []string{"198.51.100.0/24", "2001:db8::/32"}, "Cloudflare proxy IP range")
+	result, err := s.SyncSource("cloudflare", []string{"198.51.100.0/24"}, "Cloudflare proxy IP range")
 	if err != nil {
 		t.Fatalf("SyncSource() first error = %v", err)
 	}
-	if result.Added != 2 || result.Updated != 0 || result.Removed != 0 {
-		t.Fatalf("SyncSource() first result = %#v, want 2 added", result)
+	if result.Added != 1 || result.Updated != 0 || result.Removed != 0 {
+		t.Fatalf("SyncSource() first result = %#v, want 1 added", result)
 	}
 
 	result, err = s.SyncSource("cloudflare", []string{"198.51.100.0/24", "198.51.101.0/24"}, "Cloudflare proxy IP range")
 	if err != nil {
 		t.Fatalf("SyncSource() second error = %v", err)
 	}
-	if result.Added != 1 || result.Updated != 1 || result.Removed != 1 {
-		t.Fatalf("SyncSource() second result = %#v, want 1 added, 1 updated, 1 removed", result)
+	if result.Added != 1 || result.Updated != 1 || result.Removed != 0 {
+		t.Fatalf("SyncSource() second result = %#v, want 1 added, 1 updated, 0 removed", result)
 	}
 
 	entries := s.List()
@@ -115,9 +207,6 @@ func TestSyncSourceReplacesManagedEntriesOnly(t *testing.T) {
 		if seen[ip].Source != "cloudflare" || seen[ip].Note != "Cloudflare proxy IP range" {
 			t.Fatalf("managed entry %s = %#v, want Cloudflare source and note", ip, seen[ip])
 		}
-	}
-	if _, ok := seen["2001:db8::/32"]; ok {
-		t.Fatalf("stale Cloudflare entry was not removed: %#v", entries)
 	}
 }
 

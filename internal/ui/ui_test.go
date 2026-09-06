@@ -22,6 +22,10 @@ func TestDashboardContainsProminentRuleBanner(t *testing.T) {
 		`id="ruleBannerDetail"`,
 		`id="ruleBannerAction"`,
 		`id="syncCloudflareBtn"`,
+		`id="globalLoading"`,
+		`id="globalLoadingText"`,
+		`class="sortable" data-sort-key="order"`,
+		`class="sortable" data-sort-key="ip"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("index.html missing %s", want)
@@ -31,9 +35,14 @@ func TestDashboardContainsProminentRuleBanner(t *testing.T) {
 	js := string(app)
 	for _, want := range []string{
 		"function renderRuleBanner",
+		"function beginGlobalLoading",
+		"function withGlobalLoading",
 		"需要点击“应用规则”",
 		"规则正在生效",
 		"规则未生效",
+		"function reorderEntries",
+		"document.querySelectorAll(\".sortable\")",
+		"/api/whitelist/order",
 	} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("app.js missing %q", want)

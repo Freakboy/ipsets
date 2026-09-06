@@ -4,6 +4,33 @@
 
 All notable changes to IPSets are documented here.
 
+## [0.4.0] - 2026-09-06
+
+### Added
+
+- Add clickable whitelist column headers for ascending and descending sorting by sequence, IP, note, or update time.
+- Add drag-and-drop whitelist ordering with persistent sequence values in the JSON configuration.
+- Add a GitHub Actions workflow that tests the project and builds Linux `amd64` and `arm64` binaries with SHA-256 checksums.
+
+### Changed
+
+- Sync only Cloudflare IPv4 proxy ranges and reject IPv6 values returned by the Cloudflare synchronization source.
+- Make whitelist rows, note fields, and row actions more compact.
+- Keep display-only whitelist reordering from marking firewall rules as pending.
+
+## [0.3.1] - 2026-07-10
+
+### Added
+
+- Add global loading feedback for dashboard and login interactions.
+
+### Security
+
+- Require authentication regression coverage for every management API route.
+- Restrict Cloudflare IP list redirects to the official Cloudflare HTTPS host.
+- Reject unsafe nftables table names before generating nft scripts.
+- Pin the recommended Go toolchain to a version containing current standard-library security fixes.
+
 ## [0.3.0] - 2026-07-10
 
 ### Added

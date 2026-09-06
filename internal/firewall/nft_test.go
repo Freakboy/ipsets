@@ -66,6 +66,13 @@ func TestBuildNFTScriptRejectsBadEntryIP(t *testing.T) {
 	}
 }
 
+func TestBuildNFTScriptRejectsUnsafeTableName(t *testing.T) {
+	_, err := BuildNFTScript(NFTConfig{TableName: "ipsets } add rule inet filter input accept #", TCPPorts: []int{22}}, nil)
+	if err == nil {
+		t.Fatal("BuildNFTScript() error = nil, want unsafe table name error")
+	}
+}
+
 func TestBuildNFTScriptDefaultsToIPSetsTable(t *testing.T) {
 	script, err := BuildNFTScript(NFTConfig{TCPPorts: []int{22}}, nil)
 	if err != nil {

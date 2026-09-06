@@ -90,9 +90,10 @@
           <table>
             <thead>
               <tr>
-                <th>IP</th>
-                <th>备注</th>
-                <th>更新时间</th>
+                <th class="sortable" data-sort-key="order" tabindex="0">序号</th>
+                <th class="sortable" data-sort-key="ip" tabindex="0">IP</th>
+                <th class="sortable" data-sort-key="note" tabindex="0">备注</th>
+                <th class="sortable" data-sort-key="updatedAt" tabindex="0">更新时间</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -103,6 +104,12 @@
       </section>
     </main>
 
+    <div class="global-loading" id="globalLoading" role="status" aria-live="polite" hidden>
+      <div class="global-loading-box">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <span id="globalLoadingText">正在处理...</span>
+      </div>
+    </div>
     <div class="toast" id="toast" hidden></div>
     <script src="/app.js"></script>
   </body>

@@ -55,6 +55,12 @@ button:disabled {
   transform: none;
 }
 
+input:disabled,
+textarea:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
@@ -304,7 +310,7 @@ table {
 th,
 td {
   border-bottom: 1px solid var(--line);
-  padding: 12px 8px;
+  padding: 8px 7px;
   text-align: left;
 }
 
@@ -313,20 +319,77 @@ th {
   font-size: 12px;
 }
 
+.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.sortable:hover,
+.sortable:focus-visible {
+  background: #f1f6f2;
+  color: var(--teal-deep);
+  outline: none;
+}
+
+.sortable::after {
+  content: " ↕";
+  color: var(--line);
+}
+
+.sortable[data-direction="asc"]::after {
+  content: " ↑";
+  color: var(--teal);
+}
+
+.sortable[data-direction="desc"]::after {
+  content: " ↓";
+  color: var(--teal);
+}
+
+#entryRows tr {
+  cursor: grab;
+}
+
+#entryRows tr.dragging {
+  opacity: 0.42;
+}
+
+#entryRows tr.drag-over {
+  background: #eef8f4;
+  box-shadow: inset 0 2px 0 var(--teal);
+}
+
+.entry-order {
+  width: 44px;
+  color: var(--muted);
+  font-weight: 800;
+  text-align: center;
+}
+
 td code {
+  display: inline-block;
   border-radius: 4px;
   background: #edf3ef;
   color: var(--teal-deep);
-  padding: 4px 6px;
+  padding: 2px 5px;
+  white-space: nowrap;
 }
 
 .note-edit {
-  min-width: 180px;
+  min-width: 140px;
+  min-height: 34px;
+  padding: 0 8px;
 }
 
 .row-actions {
   display: flex;
   gap: 8px;
+}
+
+.row-actions button {
+  min-height: 34px;
+  padding: 0 10px;
 }
 
 .row-action {
@@ -362,6 +425,51 @@ td code {
   color: white;
   box-shadow: var(--shadow);
   padding: 12px 14px;
+}
+
+.global-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(245, 246, 241, 0.46);
+  backdrop-filter: blur(1.5px);
+  pointer-events: all;
+}
+
+.global-loading[hidden] {
+  display: none;
+}
+
+.global-loading-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
+  padding: 13px 16px;
+}
+
+.loading-spinner {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 3px solid rgba(29, 127, 114, 0.18);
+  border-top-color: var(--teal);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .login-shell {

@@ -73,6 +73,9 @@ func BuildNFTScript(cfg NFTConfig, entries []store.Entry) (string, error) {
 	if table == "" {
 		table = "ipsets"
 	}
+	if !isNFTIdentifier(table) {
+		return "", fmt.Errorf("invalid nftables table name %q", table)
+	}
 	if len(cfg.TCPPorts) == 0 {
 		return "", errors.New("at least one TCP port is required")
 	}
@@ -228,6 +231,19 @@ func (m *NFTManager) tableName() string {
 		return "ipsets"
 	}
 	return m.cfg.TableName
+}
+
+func isNFTIdentifier(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i, r := range value {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r == '_' || i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func formatPorts(ports []int) string {

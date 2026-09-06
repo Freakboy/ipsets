@@ -198,7 +198,7 @@ func TestSyncCloudflareWhitelistEntries(t *testing.T) {
 		},
 		Store: s,
 		CloudflareRanges: func(context.Context) ([]string, error) {
-			return []string{"198.51.100.42/24", "2001:db8::/32"}, nil
+			return []string{"198.51.100.42/24"}, nil
 		},
 	})
 	session := loginCookie(t, app, "admin", "secret")
@@ -220,8 +220,8 @@ func TestSyncCloudflareWhitelistEntries(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("Decode() error = %v", err)
 	}
-	if body.Added != 2 || body.Updated != 0 || body.Removed != 0 || len(body.Entries) != 2 {
-		t.Fatalf("sync response = %#v, want 2 Cloudflare entries added", body)
+	if body.Added != 1 || body.Updated != 0 || body.Removed != 0 || len(body.Entries) != 1 {
+		t.Fatalf("sync response = %#v, want 1 Cloudflare entry added", body)
 	}
 
 	entries := s.List()
@@ -232,11 +232,104 @@ func TestSyncCloudflareWhitelistEntries(t *testing.T) {
 	if seen["203.0.113.42"].Note != "manual" || seen["203.0.113.42"].Source != "" {
 		t.Fatalf("manual entry changed: %#v", seen["203.0.113.42"])
 	}
-	if seen["198.51.100.0/24"].Source != "cloudflare" || seen["2001:db8::/32"].Source != "cloudflare" {
+	if seen["198.51.100.0/24"].Source != "cloudflare" {
 		t.Fatalf("Cloudflare entries missing source: %#v", entries)
 	}
 	if got := s.FirewallState(); got.Status != "pending" || got.UpdatedAt.IsZero() {
 		t.Fatalf("FirewallState = %#v, want pending after Cloudflare sync", got)
+	}
+}
+
+func TestReorderWhitelistEntries(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	for _, ip := range []string{"192.0.2.1", "192.0.2.2"} {
+		if _, err := s.AddOrUpdateAddress(ip, ""); err != nil {
+			t.Fatalf("AddOrUpdateAddress(%q) error = %v", ip, err)
+		}
+	}
+	hash, err := config.HashPassword("secret")
+	if err != nil {
+		t.Fatalf("HashPassword() error = %v", err)
+	}
+	app := New(AppConfig{
+		Config: config.Config{
+			AdminUsername:           "admin",
+			AdminPasswordHash:       hash.PasswordHash,
+			AdminPasswordSalt:       hash.PasswordSalt,
+			AdminPasswordIterations: hash.PasswordIterations,
+		},
+		Store: s,
+	})
+	session := loginCookie(t, app, "admin", "secret")
+	req := httptest.NewRequest(http.MethodPut, "/api/whitelist/order", strings.NewReader(`{"ids":["192.0.2.2","192.0.2.1"]}`))
+	req.AddCookie(session)
+	rec := httptest.NewRecorder()
+	app.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	entries := s.List()
+	if entries[0].IP != "192.0.2.2" || entries[1].IP != "192.0.2.1" {
+		t.Fatalf("entries = %#v, want reordered whitelist", entries)
+	}
+}
+
+func TestManagementAPIRequiresAuthentication(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	hash, err := config.HashPassword("secret")
+	if err != nil {
+		t.Fatalf("HashPassword() error = %v", err)
+	}
+	cfCalled := false
+	app := New(AppConfig{
+		Config: config.Config{
+			ProtectedPorts:          []int{22},
+			ProtectedPortsRaw:       "22",
+			AdminUsername:           "admin",
+			AdminPasswordHash:       hash.PasswordHash,
+			AdminPasswordSalt:       hash.PasswordSalt,
+			AdminPasswordIterations: hash.PasswordIterations,
+		},
+		Store: s,
+		Wall:  &fakeFirewall{},
+		CloudflareRanges: func(context.Context) ([]string, error) {
+			cfCalled = true
+			return []string{"198.51.100.0/24"}, nil
+		},
+	})
+
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodPost, "/api/logout", `{}`},
+		{http.MethodGet, "/api/state", ``},
+		{http.MethodPost, "/api/whitelist/current", `{"note":"home"}`},
+		{http.MethodPost, "/api/whitelist/cloudflare", `{}`},
+		{http.MethodPost, "/api/whitelist", `{"ip":"203.0.113.42"}`},
+		{http.MethodPut, "/api/whitelist/order", `{"ids":[]}`},
+		{http.MethodPatch, "/api/whitelist/203.0.113.42", `{"note":"updated"}`},
+		{http.MethodDelete, "/api/whitelist/203.0.113.42", ``},
+		{http.MethodPut, "/api/config/ports", `{"protectedPorts":"22"}`},
+		{http.MethodPost, "/api/apply", `{}`},
+		{http.MethodPost, "/api/restore", `{}`},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s status = %d, want 401", tc.method, tc.path, rec.Code)
+		}
+	}
+	if cfCalled {
+		t.Fatal("unauthenticated Cloudflare sync reached fetch function")
 	}
 }
 
@@ -248,6 +341,26 @@ func TestParseCloudflareIPList(t *testing.T) {
 	want := []string{"198.51.100.0/24", "203.0.113.0/24"}
 	if !reflect.DeepEqual(ranges, want) {
 		t.Fatalf("parseCloudflareIPList() = %#v, want %#v", ranges, want)
+	}
+}
+
+func TestParseCloudflareIPListRejectsIPv6(t *testing.T) {
+	_, err := parseCloudflareIPList("https://example.test/ips-v4", strings.NewReader("2001:db8::/32\n"))
+	if err == nil || !strings.Contains(err.Error(), "IPv6 is not supported") {
+		t.Fatalf("parseCloudflareIPList() error = %v, want IPv6 rejection", err)
+	}
+}
+
+func TestCloudflareHTTPClientRejectsRedirectOutsideCloudflare(t *testing.T) {
+	client := cloudflareHTTPClient()
+	req := httptest.NewRequest(http.MethodGet, "http://169.254.169.254/latest/meta-data", nil)
+	if err := client.CheckRedirect(req, nil); err == nil {
+		t.Fatal("CheckRedirect() error = nil, want non-Cloudflare redirect rejection")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "https://www.cloudflare.com/ips-v4/", nil)
+	if err := client.CheckRedirect(req, nil); err != nil {
+		t.Fatalf("CheckRedirect() Cloudflare URL error = %v", err)
 	}
 }
 

@@ -41,7 +41,7 @@ IPSets 支持单个 IP 地址和 CIDR 网段，例如 `203.0.113.42` 或 `203.0.
 - Linux 服务器。
 - 服务器上可用 `nft` 命令。
 - 具备管理 nftables 的权限，通常需要 root 或等效的 `CAP_NET_ADMIN` 能力。
-- 如果从源码构建，需要与 [go.mod](go.mod) 兼容的 Go 版本。
+- 如果从源码构建，需要与 [go.mod](go.mod) 兼容的 Go 版本。建议使用固定的 toolchain 或更新版本，以包含当前 Go 标准库安全修复。
 
 Web UI 可以从任意现代系统浏览器访问。只有运行 IPSets 的服务器需要 Linux 和 nftables。
 
@@ -150,6 +150,7 @@ IPSets 启动时如果发现 `admin.password`，会使用 PBKDF2-SHA256 生成�
     {
       "id": "203.0.113.42",
       "ip": "203.0.113.42",
+      "order": 0,
       "note": "example office IP",
       "createdAt": "2026-01-01T00:00:00Z",
       "updatedAt": "2026-01-01T00:00:00Z"
@@ -253,7 +254,7 @@ ipsets.example.com {
 
 对于 Cloudflare 橙云代理域名，服务器防火墙层看到的是 Cloudflare IP。保护源站时，应只允许 Cloudflare IP 段访问 Caddy，并阻止非 Cloudflare 直连。若需要按真实用户 IP 控制访问，建议使用 Cloudflare Access/WAF，或在已经阻止源站直连的前提下，在应用层信任 Cloudflare 头。
 
-Web UI 可以从 Cloudflare 官方 `https://www.cloudflare.com/ips-v4/` 和 `https://www.cloudflare.com/ips-v6/` 列表一键同步代理 IP 网段。同步的条目会标记 `source: "cloudflare"`，下次同步可以移除过期 Cloudflare 网段，且不会删除手动管理的条目。
+Web UI 可以从 Cloudflare 官方 `https://www.cloudflare.com/ips-v4/` 列表一键同步代理 IPv4 网段。同步的条目会标记 `source: "cloudflare"`，下次同步可以移除过期 Cloudflare 网段，且不会删除手动管理的条目。白名单会按 IP 数值顺序展示并保存。
 
 对于 DNS-only 域名，服务器能看到真实客户端 IP，因此可以在防火墙层使用 IPSets 白名单。代价是源站 IP 会暴露。
 

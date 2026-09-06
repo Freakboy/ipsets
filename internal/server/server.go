@@ -29,7 +29,6 @@ const (
 
 var cloudflareIPListURLs = []string{
 	"https://www.cloudflare.com/ips-v4/",
-	"https://www.cloudflare.com/ips-v6/",
 }
 
 type Firewall interface {
@@ -91,6 +90,7 @@ func (a *App) routes() {
 	a.mux.HandleFunc("POST /api/whitelist/cloudflare", a.withAuth(a.handleSyncCloudflare))
 	a.mux.HandleFunc("POST /api/whitelist", a.withAuth(a.handleAddManual))
 	a.mux.HandleFunc("PATCH /api/whitelist/{id}", a.withAuth(a.handleUpdateNote))
+	a.mux.HandleFunc("PUT /api/whitelist/order", a.withAuth(a.handleReorder))
 	a.mux.HandleFunc("DELETE /api/whitelist/{id}", a.withAuth(a.handleDelete))
 	a.mux.HandleFunc("PUT /api/config/ports", a.withAuth(a.handleUpdatePorts))
 	a.mux.HandleFunc("POST /api/apply", a.withAuth(a.handleApply))
@@ -313,6 +313,21 @@ func (a *App) handleDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (a *App) handleReorder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "请求体不是有效 JSON")
+		return
+	}
+	if err := a.store.Reorder(body.IDs); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": a.store.List()})
+}
+
 func (a *App) handleUpdateNote(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Note string `json:"note"`
@@ -417,7 +432,7 @@ func currentIP(r *http.Request, trustProxy bool) string {
 }
 
 func fetchCloudflareIPRanges(ctx context.Context) ([]string, error) {
-	client := http.Client{Timeout: 10 * time.Second}
+	client := cloudflareHTTPClient()
 	var ranges []string
 	for _, url := range cloudflareIPListURLs {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -443,6 +458,21 @@ func fetchCloudflareIPRanges(ctx context.Context) ([]string, error) {
 	return ranges, nil
 }
 
+func cloudflareHTTPClient() http.Client {
+	return http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return errors.New("too many Cloudflare IP list redirects")
+			}
+			if req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Host, "www.cloudflare.com") {
+				return fmt.Errorf("refusing Cloudflare IP list redirect to %s", req.URL.String())
+			}
+			return nil
+		},
+	}
+}
+
 func normalizeCloudflareRanges(values []string) ([]string, error) {
 	ranges := make([]string, 0, len(values))
 	seen := map[string]bool{}
@@ -450,6 +480,9 @@ func normalizeCloudflareRanges(values []string) ([]string, error) {
 		address, err := firewall.NormalizeIPOrCIDR(value)
 		if err != nil {
 			return nil, fmt.Errorf("invalid Cloudflare IP range %q: %w", value, err)
+		}
+		if !address.Is4 {
+			return nil, fmt.Errorf("invalid Cloudflare IP range %q: IPv6 is not supported", value)
 		}
 		if !strings.Contains(address.Value, "/") {
 			return nil, fmt.Errorf("invalid Cloudflare IP range %q is not CIDR", value)
@@ -477,6 +510,9 @@ func parseCloudflareIPList(source string, r io.Reader) ([]string, error) {
 		address, err := firewall.NormalizeIPOrCIDR(line)
 		if err != nil {
 			return nil, fmt.Errorf("invalid Cloudflare IP range from %s: %q: %w", source, line, err)
+		}
+		if !address.Is4 {
+			return nil, fmt.Errorf("invalid Cloudflare IP range from %s: %q: IPv6 is not supported", source, line)
 		}
 		if !strings.Contains(address.Value, "/") {
 			return nil, fmt.Errorf("invalid Cloudflare IP range from %s: %q is not CIDR", source, line)
