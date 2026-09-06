@@ -10,7 +10,7 @@ All notable changes to IPSets are documented here.
 
 - Add clickable whitelist column headers for ascending and descending sorting by sequence, IP, note, or update time.
 - Add drag-and-drop whitelist ordering with persistent sequence values in the JSON configuration.
-- Add a GitHub Actions workflow that tests the project and builds Linux `amd64` and `arm64` binaries with SHA-256 checksums.
+- Add a GitHub Actions workflow that tests the project and builds Linux `amd64`, `arm64`, and `386` binaries with SHA-256 checksums, publishing them to a GitHub Release for version tags.
 
 ### Changed
 
