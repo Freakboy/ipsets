@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -164,6 +165,39 @@ func TestReorderValidatesBeforeChangingEntries(t *testing.T) {
 	entries := s.List()
 	if entries[0].IP != "192.0.2.1" || entries[0].Order != 0 || entries[1].IP != "192.0.2.2" || entries[1].Order != 1 {
 		t.Fatalf("entries changed after rejected reorder: %#v", entries)
+	}
+}
+
+func TestImportConfigReplacesEntriesAndMarksRulesPending(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"custom":"kept","protectedPorts":"22","whitelist":[]}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	entries := []Entry{{ID: "192.0.2.10", IP: "192.0.2.10", Order: 0, Note: "imported"}}
+	data := []byte(`{"custom":"kept","protectedPorts":"443","whitelist":[],"firewallState":{"status":"applied","message":"old"}}`)
+	if err := s.ImportConfig(data, entries); err != nil {
+		t.Fatalf("ImportConfig() error = %v", err)
+	}
+	if got := s.List(); len(got) != 1 || got[0].IP != "192.0.2.10" || got[0].Note != "imported" {
+		t.Fatalf("List() = %#v, want imported entry", got)
+	}
+	if got := s.FirewallState(); got.Status != "pending" || got.Message != "配置已导入，需要重新应用规则" {
+		t.Fatalf("FirewallState() = %#v, want pending import state", got)
+	}
+	var raw map[string]json.RawMessage
+	persisted, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if err := json.Unmarshal(persisted, &raw); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if string(raw["custom"]) != `"kept"` || !strings.Contains(string(raw["whitelist"]), "192.0.2.10") {
+		t.Fatalf("persisted config = %s, want custom field and imported whitelist", persisted)
 	}
 }
 

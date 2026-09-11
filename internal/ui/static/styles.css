@@ -297,6 +297,29 @@ h2 {
   justify-self: start;
 }
 
+.config-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 16px;
+}
+
+.config-hint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.config-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -537,6 +560,13 @@ td code {
   .manual-grid,
   .ports-editor {
     grid-template-columns: 1fr;
+  }
+
+  .config-tools,
+  .config-actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
   }
 
   button {

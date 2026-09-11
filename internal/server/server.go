@@ -49,15 +49,16 @@ type AppConfig struct {
 }
 
 type App struct {
-	cfg      config.Config
-	store    *store.Store
-	wall     Firewall
-	static   http.Handler
-	version  string
-	cfRanges CloudflareRangesFunc
-	mux      *http.ServeMux
-	sessions map[string]time.Time
-	mu       sync.Mutex
+	cfg                  config.Config
+	store                *store.Store
+	wall                 Firewall
+	static               http.Handler
+	version              string
+	cfRanges             CloudflareRangesFunc
+	mux                  *http.ServeMux
+	sessions             map[string]time.Time
+	tableRestartRequired bool
+	mu                   sync.Mutex
 }
 
 func New(cfg AppConfig) *App {
@@ -93,6 +94,8 @@ func (a *App) routes() {
 	a.mux.HandleFunc("PUT /api/whitelist/order", a.withAuth(a.handleReorder))
 	a.mux.HandleFunc("DELETE /api/whitelist/{id}", a.withAuth(a.handleDelete))
 	a.mux.HandleFunc("PUT /api/config/ports", a.withAuth(a.handleUpdatePorts))
+	a.mux.HandleFunc("GET /api/config/export", a.withAuth(a.handleExportConfig))
+	a.mux.HandleFunc("POST /api/config/import", a.withAuth(a.handleImportConfig))
 	a.mux.HandleFunc("POST /api/apply", a.withAuth(a.handleApply))
 	a.mux.HandleFunc("POST /api/restore", a.withAuth(a.handleRestore))
 	if a.static != nil {
@@ -119,7 +122,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "请求体不是有效 JSON")
 		return
 	}
-	if !a.cfg.VerifyPassword(strings.TrimSpace(body.Username), body.Password) {
+	if !a.configSnapshot().VerifyPassword(strings.TrimSpace(body.Username), body.Password) {
 		writeError(w, http.StatusUnauthorized, "用户名或密码不正确")
 		return
 	}
@@ -190,6 +193,7 @@ func randomSessionToken() (string, error) {
 }
 
 func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
+	cfg := a.configSnapshot()
 	status := "unavailable"
 	if a.wall != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
@@ -202,13 +206,14 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"currentIP":         currentIP(r, a.cfg.TrustProxy),
+		"currentIP":         currentIP(r, cfg.TrustProxy),
 		"entries":           a.store.List(),
-		"protectedPorts":    a.cfg.ProtectedPorts,
-		"protectedPortsRaw": a.cfg.ProtectedPortsRaw,
+		"protectedPorts":    cfg.ProtectedPorts,
+		"protectedPortsRaw": cfg.ProtectedPortsRaw,
 		"firewallStatus":    status,
 		"firewallState":     state,
 		"version":           a.version,
+		"restartRequired":   a.restartRequired(),
 	})
 }
 
@@ -235,6 +240,7 @@ func (a *App) reconcileFirewallState(actual string) (store.FirewallState, error)
 }
 
 func (a *App) handleAddCurrent(w http.ResponseWriter, r *http.Request) {
+	cfg := a.configSnapshot()
 	var body struct {
 		Note string `json:"note"`
 	}
@@ -242,7 +248,7 @@ func (a *App) handleAddCurrent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "请求体不是有效 JSON")
 		return
 	}
-	ip, err := firewall.NormalizeIP(currentIP(r, a.cfg.TrustProxy))
+	ip, err := firewall.NormalizeIP(currentIP(r, cfg.TrustProxy))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "无法识别当前访问 IP")
 		return
@@ -366,22 +372,152 @@ func (a *App) handleUpdatePorts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	a.mu.Lock()
 	a.cfg.ProtectedPorts = ports
 	a.cfg.ProtectedPortsRaw = raw
+	a.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"protectedPorts":    ports,
 		"protectedPortsRaw": raw,
 	})
 }
 
+func (a *App) handleExportConfig(w http.ResponseWriter, r *http.Request) {
+	cfg := a.configSnapshot()
+	data, err := os.ReadFile(cfg.ConfigPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Disposition", `attachment; filename="ipsets-config.json"`)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+func (a *App) handleImportConfig(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "配置文件不能超过 2 MiB")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "无法读取配置文件")
+		return
+	}
+	importedCfg, err := config.ParseImport(data)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var imported struct {
+		Whitelist []store.Entry `json:"whitelist"`
+	}
+	if err := json.Unmarshal(data, &imported); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	now := time.Now().UTC()
+	seen := make(map[string]bool, len(imported.Whitelist))
+	for i := range imported.Whitelist {
+		address, err := firewall.NormalizeIPOrCIDR(imported.Whitelist[i].IP)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("无效的白名单地址 %q", imported.Whitelist[i].IP))
+			return
+		}
+		if seen[address.Value] {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("白名单地址重复：%s", address.Value))
+			return
+		}
+		seen[address.Value] = true
+		imported.Whitelist[i].ID = address.Value
+		imported.Whitelist[i].IP = address.Value
+		imported.Whitelist[i].Order = i
+		imported.Whitelist[i].Note = strings.TrimSpace(imported.Whitelist[i].Note)
+		imported.Whitelist[i].Source = strings.TrimSpace(imported.Whitelist[i].Source)
+		if imported.Whitelist[i].CreatedAt.IsZero() {
+			imported.Whitelist[i].CreatedAt = now
+		}
+		if imported.Whitelist[i].UpdatedAt.IsZero() {
+			imported.Whitelist[i].UpdatedAt = imported.Whitelist[i].CreatedAt
+		}
+	}
+	if _, err := firewall.BuildNFTScript(firewall.NFTConfig{
+		TableName: importedCfg.TableName,
+		TCPPorts:  importedCfg.ProtectedPorts,
+	}, imported.Whitelist); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var persisted map[string]json.RawMessage
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	portsData, err := json.Marshal(importedCfg.ProtectedPortsRaw)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	persisted["protectedPorts"] = portsData
+	adminData, err := json.Marshal(config.AdminConfig{
+		Username: importedCfg.AdminUsername,
+		Password: importedCfg.AdminPasswordHash,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	persisted["admin"] = adminData
+	data, err = json.Marshal(persisted)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := a.store.ImportConfig(data, imported.Whitelist); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	a.mu.Lock()
+	tableChanged := a.cfg.TableName != importedCfg.TableName
+	restartRequired := a.cfg.ListenAddr != importedCfg.ListenAddr || tableChanged
+	a.tableRestartRequired = tableChanged
+	a.cfg.ProtectedPorts = importedCfg.ProtectedPorts
+	a.cfg.ProtectedPortsRaw = importedCfg.ProtectedPortsRaw
+	a.cfg.AdminUsername = importedCfg.AdminUsername
+	a.cfg.AdminPasswordHash = importedCfg.AdminPasswordHash
+	a.cfg.AdminPasswordSalt = importedCfg.AdminPasswordSalt
+	a.cfg.AdminPasswordIterations = importedCfg.AdminPasswordIterations
+	a.cfg.TrustProxy = importedCfg.TrustProxy
+	a.mu.Unlock()
+
+	message := "配置已导入，需要重新应用规则"
+	if restartRequired {
+		message = "配置已导入；监听地址或表名已变化，请重启 IPSets 后重新应用规则"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":         message,
+		"restartRequired": restartRequired,
+	})
+}
+
 func (a *App) handleApply(w http.ResponseWriter, r *http.Request) {
+	if a.restartRequired() {
+		writeError(w, http.StatusConflict, "配置中的 nftables 表名已变化，请重启 IPSets 后再应用规则")
+		return
+	}
 	if a.wall == nil {
 		writeError(w, http.StatusServiceUnavailable, "防火墙后端不可用")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	if err := a.wall.Apply(ctx, a.cfg.ProtectedPorts, a.store.List()); err != nil {
+	if err := a.wall.Apply(ctx, a.configSnapshot().ProtectedPorts, a.store.List()); err != nil {
 		_ = a.store.UpdateFirewallState(store.FirewallState{Status: "error", Message: err.Error()})
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -392,6 +528,20 @@ func (a *App) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "applied", "firewallState": a.store.FirewallState()})
+}
+
+func (a *App) configSnapshot() config.Config {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	cfg := a.cfg
+	cfg.ProtectedPorts = append([]int(nil), a.cfg.ProtectedPorts...)
+	return cfg
+}
+
+func (a *App) restartRequired() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.tableRestartRequired
 }
 
 func (a *App) handleRestore(w http.ResponseWriter, r *http.Request) {

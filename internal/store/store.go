@@ -239,6 +239,44 @@ func (s *Store) Reorder(ids []string) error {
 	return s.saveLocked()
 }
 
+func (s *Store) ImportConfig(data []byte, entries []Entry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	raw := map[string]json.RawMessage{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	imported := make(map[string]Entry, len(entries))
+	for _, entry := range entries {
+		if _, exists := imported[entry.ID]; exists {
+			return errors.New("imported config contains duplicate whitelist entries")
+		}
+		imported[entry.ID] = entry
+	}
+	whitelist, err := json.Marshal(entries)
+	if err != nil {
+		return err
+	}
+	state := FirewallState{
+		Status:    "pending",
+		Message:   "配置已导入，需要重新应用规则",
+		UpdatedAt: time.Now().UTC(),
+	}
+	stateData, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	raw["whitelist"] = whitelist
+	raw["firewallState"] = stateData
+	if err := s.writeRawConfigLocked(raw); err != nil {
+		return err
+	}
+	s.entries = imported
+	s.firewallState = state
+	return nil
+}
+
 func (s *Store) UpdateProtectedPorts(raw string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

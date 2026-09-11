@@ -53,7 +53,7 @@ Web UI 可以从任意现代系统浏览器访问。只有运行 IPSets 的服�
 go run ./cmd/ipsets
 ```
 
-首次启动会创建 `./config.json`，并在终端打印一次性生成的管理员密码：
+首次启动会创建 `./config.json`，通过 `https://api4.ipify.org` 查询 VPS 的公网 IPv4，查询成功时自动将其规范化后的 `/24` 网段加入初始白名单，并在终端打印一次性生成的管理员密码。查询失败不会阻止启动。
 
 ```text
 created config at config.json
@@ -77,6 +77,30 @@ go build -o ipsets ./cmd/ipsets
 ```
 
 生成的 `ipsets` 二进制已被 Git 忽略。
+
+## CLI 操作
+
+删除 IPSets 创建的 nftables 表并退出，不启动 Web 服务：
+
+```bash
+sudo ./ipsets --restore
+```
+
+短参数形式为 `sudo ./ipsets -r`。
+
+通过隐藏输入交互重置管理员密码：
+
+```bash
+sudo ./ipsets --password
+```
+
+自动化场景可以使用 `IPSETS_NEW_PASSWORD`：
+
+```bash
+sudo env IPSETS_NEW_PASSWORD='new-secret' ./ipsets --password
+```
+
+短参数形式为 `sudo ./ipsets -p`。使用 `-h` 或 `--help` 可以查看全部 CLI 参数。
 
 ## 配置
 
@@ -125,7 +149,9 @@ go run ./cmd/ipsets
 }
 ```
 
-IPSets 启动时如果发现 `admin.password`，会使用 PBKDF2-SHA256 生成哈希，写回 `passwordHash`、`passwordSalt` 和 `passwordIterations`，然后删除明文 `password` 字段。
+`admin.password` 是唯一持久化的密码字段。IPSets 启动时如果发现该值是明文，会在原字段内替换为 bcrypt 哈希。因此可以先停止 IPSets，将该字段改成新明文密码，再启动 IPSets 完成动态加密和生效。bcrypt 支持的密码长度上限为 72 字节。
+
+旧 PBKDF2 配置会迁移成 `admin.password` 内的单字段兼容值，原密码仍可继续登录。通过 CLI 重置或手工改成明文后，会升级为 bcrypt。
 
 运行后的配置可能类似：
 
@@ -137,9 +163,7 @@ IPSets 启动时如果发现 `admin.password`，会使用 PBKDF2-SHA256 生成�
   "trustProxy": false,
   "admin": {
     "username": "admin",
-    "passwordHash": "...",
-    "passwordSalt": "...",
-    "passwordIterations": 210000
+    "password": "$2a$10$..."
   },
   "firewallState": {
     "status": "pending",
@@ -160,6 +184,12 @@ IPSets 启动时如果发现 `admin.password`，会使用 PBKDF2-SHA256 生成�
 ```
 
 不要提交真实的 `config.json`。它可能包含密码哈希、真实 IP 和备注信息。仓库默认已经忽略该文件。
+
+### 配置备份和恢复
+
+管理员登录后可以从 Web UI 导出完整 JSON 配置，并在需要时重新导入。导出文件包含管理员密码哈希、白名单、备注、排序、受保护端口和其他持久化设置，应按敏感备份文件妥善保管。
+
+导入会在替换文件前完成校验。管理员凭据、代理信任、受保护端口和白名单会立即热更新；如果监听地址或 nftables 表名发生变化，需要重启 IPSets。表名变化后，重启前会阻止应用防火墙规则。
 
 ## 端口语法
 

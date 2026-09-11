@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -277,6 +279,90 @@ func TestReorderWhitelistEntries(t *testing.T) {
 	}
 }
 
+func TestExportAndImportConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	originalHash, err := config.HashPassword("secret")
+	if err != nil {
+		t.Fatalf("HashPassword() original error = %v", err)
+	}
+	original := fmt.Sprintf(`{"listenAddr":":8008","tableName":"ipsets","protectedPorts":"22","trustProxy":false,"admin":{"username":"admin","password":%q},"whitelist":[]}`,
+		originalHash.PasswordHash)
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	app := New(AppConfig{
+		Config: config.Config{
+			ListenAddr:              ":8008",
+			TableName:               "ipsets",
+			ConfigPath:              path,
+			ProtectedPorts:          []int{22},
+			ProtectedPortsRaw:       "22",
+			AdminUsername:           "admin",
+			AdminPasswordHash:       originalHash.PasswordHash,
+			AdminPasswordSalt:       originalHash.PasswordSalt,
+			AdminPasswordIterations: originalHash.PasswordIterations,
+		},
+		Store: s,
+	})
+	session := loginCookie(t, app, "admin", "secret")
+
+	exportReq := httptest.NewRequest(http.MethodGet, "/api/config/export", nil)
+	exportReq.AddCookie(session)
+	exportRec := httptest.NewRecorder()
+	app.ServeHTTP(exportRec, exportReq)
+	if exportRec.Code != http.StatusOK || !strings.Contains(exportRec.Header().Get("Content-Disposition"), "ipsets-config.json") || !json.Valid(exportRec.Body.Bytes()) {
+		t.Fatalf("export status = %d, headers = %#v, body = %s", exportRec.Code, exportRec.Header(), exportRec.Body.String())
+	}
+
+	imported := `{"listenAddr":":8008","tableName":"ipsets","protectedPorts":"443,80","trustProxy":true,"admin":{"username":"operator","password":"new-secret"},"whitelist":[{"ip":"192.0.2.42/24","note":"imported range"}]}`
+	importReq := httptest.NewRequest(http.MethodPost, "/api/config/import", strings.NewReader(imported))
+	importReq.AddCookie(session)
+	importRec := httptest.NewRecorder()
+	app.ServeHTTP(importRec, importReq)
+	if importRec.Code != http.StatusOK {
+		t.Fatalf("import status = %d, body = %s", importRec.Code, importRec.Body.String())
+	}
+	var importBody struct {
+		RestartRequired bool `json:"restartRequired"`
+	}
+	if err := json.NewDecoder(importRec.Body).Decode(&importBody); err != nil {
+		t.Fatalf("Decode(import) error = %v", err)
+	}
+	if importBody.RestartRequired {
+		t.Fatal("RestartRequired = true, want hot-reloadable import")
+	}
+	if entries := s.List(); len(entries) != 1 || entries[0].IP != "192.0.2.0/24" || entries[0].Note != "imported range" {
+		t.Fatalf("entries = %#v, want normalized imported whitelist", entries)
+	}
+	if state := s.FirewallState(); state.Status != "pending" {
+		t.Fatalf("FirewallState() = %#v, want pending", state)
+	}
+	if cfg := app.configSnapshot(); cfg.ProtectedPortsRaw != "80,443" || !cfg.TrustProxy || !cfg.VerifyPassword("operator", "new-secret") {
+		t.Fatalf("runtime config = %#v, want imported hot settings", cfg)
+	}
+	persisted, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(imported config) error = %v", err)
+	}
+	if strings.Contains(string(persisted), "new-secret") || !strings.Contains(string(persisted), `"password": "$2`) {
+		t.Fatalf("imported password was not persisted as bcrypt: %s", persisted)
+	}
+}
+
+func TestApplyRejectsImportedTableNameUntilRestart(t *testing.T) {
+	app := &App{tableRestartRequired: true}
+	req := httptest.NewRequest(http.MethodPost, "/api/apply", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	app.handleApply(rec, req)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "请重启 IPSets") {
+		t.Fatalf("status = %d, body = %s, want restart conflict", rec.Code, rec.Body.String())
+	}
+}
+
 func TestManagementAPIRequiresAuthentication(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "config.json"))
 	if err != nil {
@@ -318,6 +404,8 @@ func TestManagementAPIRequiresAuthentication(t *testing.T) {
 		{http.MethodPatch, "/api/whitelist/203.0.113.42", `{"note":"updated"}`},
 		{http.MethodDelete, "/api/whitelist/203.0.113.42", ``},
 		{http.MethodPut, "/api/config/ports", `{"protectedPorts":"22"}`},
+		{http.MethodGet, "/api/config/export", ``},
+		{http.MethodPost, "/api/config/import", `{}`},
 		{http.MethodPost, "/api/apply", `{}`},
 		{http.MethodPost, "/api/restore", `{}`},
 	} {

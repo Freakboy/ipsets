@@ -4,6 +4,21 @@
 
 All notable changes to IPSets are documented here.
 
+## [0.5.0] - 2026-09-11
+
+### Added
+
+- Add authenticated JSON configuration export and import from the web UI.
+- Validate imported credentials, listen address, protected ports, nftables table name, and whitelist addresses before atomically replacing the active configuration.
+- Hot-reload imported credentials, proxy trust, protected ports, and whitelist entries, while requiring a restart before applying rules when the nftables table name changes.
+- Add the VPS public IPv4 `/24` range to newly generated configurations when public address discovery succeeds.
+- Add paired CLI options: `-r`/`--restore` for firewall restoration, `-p`/`--password` for password reset, and `-h`/`--help` for usage information. Password reset also supports `IPSETS_NEW_PASSWORD` automation.
+
+### Changed
+
+- Store administrator credentials in the single `admin.password` field and replace plaintext values with bcrypt hashes at startup.
+- Migrate legacy PBKDF2 fields into a single compatible password value without invalidating existing credentials.
+
 ## [0.4.0] - 2026-09-06
 
 ### Added

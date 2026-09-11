@@ -26,6 +26,9 @@ func TestDashboardContainsProminentRuleBanner(t *testing.T) {
 		`id="globalLoadingText"`,
 		`class="sortable" data-sort-key="order"`,
 		`class="sortable" data-sort-key="ip"`,
+		`id="exportConfigBtn"`,
+		`id="importConfigBtn"`,
+		`id="importConfigFile"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("index.html missing %s", want)
@@ -42,6 +45,10 @@ func TestDashboardContainsProminentRuleBanner(t *testing.T) {
 		"规则未生效",
 		"function reorderEntries",
 		"document.querySelectorAll(\".sortable\")",
+		"async function exportConfig",
+		"async function importConfig",
+		"/api/config/export",
+		"/api/config/import",
 		"/api/whitelist/order",
 	} {
 		if !strings.Contains(js, want) {

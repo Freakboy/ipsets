@@ -363,6 +363,55 @@ async function savePorts() {
   });
 }
 
+async function exportConfig() {
+  await withGlobalLoading("正在导出配置...", async () => {
+    const res = await fetch("/api/config/export");
+    if (res.status === 401) {
+      redirectToLogin();
+      return;
+    }
+    if (!res.ok) {
+      let message = `HTTP ${res.status}`;
+      try {
+        message = (await res.json()).error || message;
+      } catch (_) {
+        // Keep the status message when the response is not JSON.
+      }
+      throw new Error(message);
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "ipsets-config.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast("配置已导出");
+  });
+}
+
+async function importConfig(file) {
+  if (!file) return;
+  if (!window.confirm("导入会替换当前配置和白名单。确认继续吗？")) {
+    el("importConfigFile").value = "";
+    return;
+  }
+  await withGlobalLoading("正在导入配置...", async () => {
+    try {
+      const result = await api("/api/config/import", {
+        method: "POST",
+        body: await file.text(),
+        loadingText: "正在校验并导入配置...",
+      });
+      toast(result.message || "配置已导入");
+      await refresh();
+    } finally {
+      el("importConfigFile").value = "";
+    }
+  });
+}
+
 async function syncCloudflare() {
   await withGlobalLoading("正在更新 Cloudflare 代理 IP...", async () => {
     setOperationBusy("cloudflare", true);
@@ -436,6 +485,11 @@ el("applyBtn").addEventListener("click", applyRules);
 el("restoreBtn").addEventListener("click", restoreRules);
 el("refreshBtn").addEventListener("click", refresh);
 el("savePortsBtn").addEventListener("click", () => savePorts().catch((err) => toast(err.message)));
+el("exportConfigBtn").addEventListener("click", () => exportConfig().catch((err) => toast(err.message)));
+el("importConfigBtn").addEventListener("click", () => el("importConfigFile").click());
+el("importConfigFile").addEventListener("change", (event) => {
+  importConfig(event.target.files[0]).catch((err) => toast(err.message));
+});
 el("ruleBannerAction").addEventListener("click", () => {
   const action = el("ruleBannerAction").dataset.action;
   if (action === "refresh") {

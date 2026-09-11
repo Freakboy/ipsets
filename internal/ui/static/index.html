@@ -76,6 +76,17 @@
           <button id="addManualBtn">添加</button>
         </div>
         <button id="syncCloudflareBtn" class="ghost sync-cloudflare" type="button">更新 Cloudflare 代理 IP</button>
+        <div class="config-tools">
+          <div>
+            <p class="label">配置备份</p>
+            <p class="config-hint">导出的文件包含管理员密码哈希和白名单备注，请妥善保管。</p>
+          </div>
+          <div class="config-actions">
+            <button id="exportConfigBtn" class="ghost" type="button">导出配置</button>
+            <button id="importConfigBtn" class="ghost" type="button">导入配置</button>
+            <input id="importConfigFile" type="file" accept="application/json,.json" hidden>
+          </div>
+        </div>
       </section>
 
       <section class="panel list-panel">

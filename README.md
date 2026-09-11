@@ -53,7 +53,7 @@ Run from the repository:
 go run ./cmd/ipsets
 ```
 
-On the first start, IPSets creates `./config.json` and prints a one-time generated admin password:
+On the first start, IPSets creates `./config.json`, looks up the VPS public IPv4 address through `https://api4.ipify.org`, adds its canonical `/24` range to the initial whitelist when lookup succeeds, and prints a one-time generated admin password. Lookup failure does not block startup.
 
 ```text
 created config at config.json
@@ -77,6 +77,30 @@ go build -o ipsets ./cmd/ipsets
 ```
 
 The generated `ipsets` binary is ignored by Git.
+
+## CLI Operations
+
+Remove the nftables table created by IPSets and exit without starting the web server:
+
+```bash
+sudo ./ipsets --restore
+```
+
+The short form is `sudo ./ipsets -r`.
+
+Reset the administrator password using a hidden interactive prompt:
+
+```bash
+sudo ./ipsets --password
+```
+
+For non-interactive automation, provide `IPSETS_NEW_PASSWORD`:
+
+```bash
+sudo env IPSETS_NEW_PASSWORD='new-secret' ./ipsets --password
+```
+
+The short form is `sudo ./ipsets -p`. Use `-h` or `--help` to list all CLI options.
 
 ## Configuration
 
@@ -125,7 +149,9 @@ Minimal first-run config with a manually chosen password:
 }
 ```
 
-When IPSets starts and sees `admin.password`, it hashes the password with PBKDF2-SHA256, writes `passwordHash`, `passwordSalt`, and `passwordIterations`, then removes the plaintext `password` field.
+`admin.password` is the only persisted password field. When IPSets starts and the value is plaintext, it replaces the value in place with a bcrypt hash. You can therefore stop IPSets, edit this field to a new plaintext password, and start IPSets again to hash and activate it. bcrypt accepts passwords up to 72 bytes.
+
+Older PBKDF2 configurations are migrated into a single compatibility value in `admin.password` so existing credentials continue to work. Resetting the password or replacing it with plaintext upgrades it to bcrypt.
 
 The runtime config may look like this:
 
@@ -137,9 +163,7 @@ The runtime config may look like this:
   "trustProxy": false,
   "admin": {
     "username": "admin",
-    "passwordHash": "...",
-    "passwordSalt": "...",
-    "passwordIterations": 210000
+    "password": "$2a$10$..."
   },
   "firewallState": {
     "status": "pending",
@@ -160,6 +184,12 @@ The runtime config may look like this:
 ```
 
 Do not commit your real `config.json`. It may contain password hashes, IP addresses, and notes. The repository ignores it by default.
+
+### Configuration backup and restore
+
+Authenticated administrators can export the complete JSON configuration from the web UI and import it later. The export contains the administrator password hash, whitelist entries, notes, ordering, protected ports, and other persisted settings, so store it as a sensitive backup.
+
+Imports are validated before the file is replaced. Credentials, trusted-proxy behavior, protected ports, and whitelist entries are reloaded immediately. If the listen address or nftables table name changes, restart IPSets; applying firewall rules is blocked until restart when the table name changed.
 
 ## Port Syntax
 
